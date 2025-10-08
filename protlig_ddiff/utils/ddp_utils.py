@@ -1,0 +1,133 @@
+"""
+Distributed Data Parallel (DDP) utilities for Aurora and Polaris clusters.
+"""
+import os
+import socket
+import torch
+import torch.distributed as dist
+
+# Optional MPI import for Aurora
+try:
+    from mpi4py import MPI
+    MPI_AVAILABLE = True
+except ImportError:
+    MPI_AVAILABLE = False
+    print("⚠️  MPI not available - DDP will be disabled")
+
+# Intel extensions for Aurora
+try:
+    import intel_extension_for_pytorch as ipex
+    import oneccl_bindings_for_pytorch as torch_ccl
+    INTEL_AVAILABLE = True
+except ImportError:
+    INTEL_AVAILABLE = False
+    print("⚠️  Intel extensions not found, running on CPU/CUDA")
+
+
+def setup_ddp_aurora():
+    """Setup DDP for Aurora with proper Intel XPU handling."""
+    if not MPI_AVAILABLE:
+        raise RuntimeError("MPI not available - cannot setup Aurora DDP")
+
+    # DDP: Set environmental variables used by PyTorch
+    SIZE = MPI.COMM_WORLD.Get_size()
+    RANK = MPI.COMM_WORLD.Get_rank()
+    LOCAL_RANK = int(os.environ.get('PALS_LOCAL_RANKID', '0'))
+
+    # Set environment variables
+    os.environ['RANK'] = str(RANK)
+    os.environ['WORLD_SIZE'] = str(SIZE)
+    os.environ['LOCAL_RANK'] = str(LOCAL_RANK)
+
+    # Setup master address for Aurora
+    MASTER_ADDR = socket.gethostname() if RANK == 0 else None
+    MASTER_ADDR = MPI.COMM_WORLD.bcast(MASTER_ADDR, root=0)
+    os.environ['MASTER_ADDR'] = f"{MASTER_ADDR}.hsn.cm.aurora.alcf.anl.gov"
+    os.environ['MASTER_PORT'] = str(2345)
+
+    print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
+
+    # Initialize distributed communication with CCL backend for Intel XPU
+    torch.distributed.init_process_group(
+        backend='ccl',
+        init_method='env://',
+        rank=int(RANK),
+        world_size=int(SIZE)
+    )
+
+    # Set XPU device
+    device = f'xpu:{LOCAL_RANK}'
+    torch.xpu.set_device(LOCAL_RANK)
+
+    print(f"✅ DDP initialized: rank {RANK}/{SIZE}, local_rank {LOCAL_RANK}, device {device}")
+
+    return RANK, device, SIZE
+
+
+def setup_ddp_polaris(rank, world_size):
+    """Setup DDP for Polaris cluster."""
+    if not MPI_AVAILABLE:
+        raise RuntimeError("MPI not available - cannot setup Polaris DDP")
+
+    # DDP: Set environmental variables used by PyTorch
+    SIZE = MPI.COMM_WORLD.Get_size()
+    RANK = MPI.COMM_WORLD.Get_rank()
+    LOCAL_RANK = int(os.environ.get('PMI_LOCAL_RANK', '0'))
+
+    # Set environment variables
+    os.environ['RANK'] = str(RANK)
+    os.environ['WORLD_SIZE'] = str(SIZE)
+    os.environ['LOCAL_RANK'] = str(LOCAL_RANK)
+
+    # Setup master address for Polaris
+    MASTER_ADDR = socket.gethostname() if RANK == 0 else None
+    MASTER_ADDR = MPI.COMM_WORLD.bcast(MASTER_ADDR, root=0)
+    os.environ['MASTER_ADDR'] = MASTER_ADDR
+    os.environ['MASTER_PORT'] = str(2345)
+
+    print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
+
+    # Initialize distributed communication
+    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+
+    # Set CUDA device
+    device_id = rank % torch.cuda.device_count()
+    torch.cuda.set_device(device_id)
+    
+    return dist.get_rank(), device_id, dist.get_world_size()
+
+
+def cleanup_ddp():
+    """Clean up distributed training."""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+        print("✅ DDP cleanup completed")
+
+
+def is_main_process():
+    """Check if this is the main process (rank 0)."""
+    return not dist.is_initialized() or dist.get_rank() == 0
+
+
+def get_world_size():
+    """Get the world size for distributed training."""
+    return dist.get_world_size() if dist.is_initialized() else 1
+
+
+def get_rank():
+    """Get the current process rank."""
+    return dist.get_rank() if dist.is_initialized() else 0
+
+
+def barrier():
+    """Synchronize all processes."""
+    if dist.is_initialized():
+        dist.barrier()
+
+
+def all_reduce_mean(tensor):
+    """All-reduce a tensor and compute the mean across all processes."""
+    if dist.is_initialized():
+        dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        tensor /= dist.get_world_size()
+    return tensor

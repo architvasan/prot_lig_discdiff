@@ -1,0 +1,66 @@
+# Example configuration for SEDD training
+# This file shows all available configuration options
+
+# Vocabulary and tokenization
+tokens: 26  # 25 base tokens + 1 absorbing token
+
+# Model configuration
+model:
+  dim: 768                    # Model dimension
+  n_heads: 12                 # Number of attention heads
+  n_layers: 12                # Number of transformer layers
+  max_seq_len: 512           # Maximum sequence length
+  cond_dim: 128              # Conditioning dimension for time embedding
+  scale_by_sigma: false      # Whether to scale by sigma (disable for SUBS)
+
+# Training configuration
+training:
+  batch_size: 32             # Training batch size
+  learning_rate: 1e-4        # Learning rate
+  weight_decay: 0.01         # Weight decay for regularization
+  warmup_steps: 1000         # Number of warmup steps
+  max_steps: 100000          # Maximum training steps
+  gradient_clip_norm: 1.0    # Gradient clipping norm
+  accumulate_grad_batches: 4 # Gradient accumulation steps (effective batch = batch_size * this)
+  use_ema: true              # Use exponential moving average
+  ema_decay: 0.9999          # EMA decay rate
+  use_subs_loss: true        # Use SUBS loss instead of score-based loss
+
+# Data configuration
+data:
+  max_length: 512            # Maximum sequence length
+  tokenize_on_fly: false     # Whether to tokenize during training
+  use_streaming: false       # Whether to use streaming data loading
+  num_workers: 4             # Number of data loading workers
+  pin_memory: true           # Pin memory for faster GPU transfer
+
+# Noise schedule configuration
+noise:
+  type: "loglinear"          # Noise schedule type
+  eps: 1e-3                  # Epsilon parameter for noise schedule
+  sigma_min: 1e-4            # Minimum noise level
+  sigma_max: 1.0             # Maximum noise level
+
+# Curriculum learning configuration
+curriculum:
+  enabled: true              # Enable curriculum learning
+  start_bias: 0.8            # Initial bias towards low noise
+  end_bias: 0.0              # Final bias (uniform sampling)
+  decay_steps: 10000         # Steps to decay from start to end bias
+
+# Logging and checkpointing
+logging:
+  log_interval: 100          # Steps between logging
+  checkpoint_interval: 5000  # Steps between checkpoints
+  eval_interval: 1000        # Steps between evaluations (if applicable)
+
+# Optimizer configuration (optional, defaults to AdamW)
+optimizer:
+  type: "adamw"              # Optimizer type: adamw, adam
+  betas: [0.9, 0.95]         # Beta parameters
+  eps: 1e-8                  # Epsilon parameter
+
+# Scheduler configuration (optional, defaults to cosine)
+scheduler:
+  type: "cosine"             # Scheduler type: cosine, linear, constant
+  min_lr_ratio: 0.1          # Minimum learning rate as ratio of max LR

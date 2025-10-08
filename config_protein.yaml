@@ -1,0 +1,66 @@
+# Protein Discrete Diffusion Training Configuration
+# Optimized for protein sequences with SUBS loss
+
+# Vocabulary: 25 base tokens (20 amino acids + 5 special) + 1 absorbing = 26 total
+tokens: 26
+
+# Model configuration - balanced for protein sequences
+model:
+  dim: 512                    # Model dimension (smaller for faster training)
+  n_heads: 8                  # Number of attention heads
+  n_layers: 8                 # Number of transformer layers
+  max_seq_len: 512           # Maximum protein sequence length
+  cond_dim: 128              # Time embedding dimension
+  scale_by_sigma: false      # Disable for SUBS loss (recommended)
+
+# Training configuration - optimized for stability
+training:
+  batch_size: 16             # Mini-batch size (adjust based on memory)
+  learning_rate: 2e-4        # Learning rate (slightly higher for SUBS)
+  weight_decay: 0.01         # Weight decay for regularization
+  warmup_steps: 2000         # Warmup steps (longer for stability)
+  max_steps: 50000           # Total training steps
+  gradient_clip_norm: 1.0    # Gradient clipping
+  accumulate_grad_batches: 8 # Effective batch = 16 * 8 = 128
+  use_ema: true              # Use exponential moving average
+  ema_decay: 0.9999          # EMA decay rate
+  use_subs_loss: true        # Use SUBS loss (recommended for stability)
+
+# Data configuration
+data:
+  max_length: 512            # Maximum sequence length
+  tokenize_on_fly: false     # Set to true if data is not pre-tokenized
+  use_streaming: false       # Set to true for very large datasets
+  num_workers: 4             # Data loading workers
+  pin_memory: true           # Pin memory for faster GPU transfer
+
+# Noise schedule - LogLinear works well for proteins
+noise:
+  type: "loglinear"          # Noise schedule type
+  eps: 1e-3                  # Small epsilon for numerical stability
+  sigma_min: 1e-4            # Minimum noise level
+  sigma_max: 2.0             # Maximum noise level
+
+# Curriculum learning - helps with training stability
+curriculum:
+  enabled: true              # Enable curriculum learning
+  start_bias: 0.8            # Start with 80% bias towards low noise
+  end_bias: 0.0              # End with uniform sampling
+  decay_steps: 15000         # Decay over 15k steps (30% of training)
+
+# Logging and checkpointing
+logging:
+  log_interval: 100          # Log every 100 steps
+  checkpoint_interval: 2500  # Checkpoint every 2500 steps
+  eval_interval: 1000        # Evaluation interval (if applicable)
+
+# Optimizer settings (AdamW with protein-optimized settings)
+optimizer:
+  type: "adamw"              # AdamW optimizer
+  betas: [0.9, 0.95]         # Beta parameters (slightly different beta2)
+  eps: 1e-8                  # Epsilon for numerical stability
+
+# Learning rate scheduler (cosine with warmup)
+scheduler:
+  type: "cosine"             # Cosine annealing
+  min_lr_ratio: 0.1          # Minimum LR = 10% of max LR
