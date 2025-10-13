@@ -147,21 +147,38 @@ class UniRef50Dataset(Dataset):
                 for line in f:
                     self.data.append(json.loads(line.strip()))
         elif self.data_file.endswith('.pt'):
-            self.data = torch.load(self.data_file)
+            # PyTorch file - load with progress for large files
+            import os
+            file_size_mb = os.path.getsize(self.data_file) / (1024 * 1024)
+            print(f"📊 File size: {file_size_mb:.1f} MB")
+
+            if file_size_mb > 100:  # Large file
+                print("⚠️  Large file detected, this may take a while...")
+
+            self.data = torch.load(self.data_file, map_location='cpu')
         else:
             raise ValueError(f"Unsupported file format: {self.data_file}")
-        
+
         print(f"✅ Loaded {len(self.data)} sequences")
 
     def _setup_streaming(self):
         """Setup for streaming data loading."""
         print(f"🌊 Setting up streaming from {self.data_file}")
-        
-        # Count lines for length estimation
-        with open(self.data_file, 'r') as f:
-            self.length = sum(1 for _ in f)
-        
-        print(f"✅ Streaming setup complete, estimated {self.length} sequences")
+
+        # Check if it's a .pt file (binary) or text file
+        if self.data_file.endswith('.pt'):
+            print("⚠️  .pt files don't support streaming, loading into memory instead")
+            self._load_data()
+            return
+
+        # Count lines for length estimation (only for text files)
+        try:
+            with open(self.data_file, 'r', encoding='utf-8') as f:
+                self.length = sum(1 for _ in f)
+            print(f"✅ Streaming setup complete, estimated {self.length} sequences")
+        except UnicodeDecodeError:
+            print("⚠️  File encoding issue, falling back to memory loading")
+            self._load_data()
 
     def __len__(self):
         if self.use_streaming:
@@ -217,7 +234,11 @@ class UniRef50Dataset(Dataset):
     def _get_streaming_item(self, idx):
         """Get item from streaming data."""
         try:
-            with open(self.data_file, 'r') as f:
+            # For .pt files, we can't really stream, so this shouldn't be called
+            if self.data_file.endswith('.pt'):
+                raise ValueError("Streaming not supported for .pt files")
+
+            with open(self.data_file, 'r', encoding='utf-8') as f:
                 for i, line in enumerate(f):
                     if i == idx:
                         item = json.loads(line.strip())

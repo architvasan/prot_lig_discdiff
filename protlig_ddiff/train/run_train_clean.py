@@ -249,6 +249,11 @@ class UniRef50Trainer:
             use_streaming = getattr(self.train_config.data, 'use_streaming', True)      # Default to True for large datasets
             max_length = getattr(self.train_config.data, 'max_length', 256)            # Shorter default for tokenization
 
+            # Disable streaming for .pt files (binary format doesn't support streaming)
+            if self.config.datafile.endswith('.pt'):
+                use_streaming = False
+                print("🔧 Disabled streaming for .pt file (binary format)")
+
             print(f"🔧 Dataset settings: tokenize_on_fly={tokenize_on_fly}, use_streaming={use_streaming}, max_length={max_length}")
 
             train_dataset = UniRef50Dataset(
