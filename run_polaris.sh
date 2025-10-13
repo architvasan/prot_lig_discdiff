@@ -1,26 +1,67 @@
 #!/bin/bash
 
 # Polaris Cluster Training Script for Protein Discrete Diffusion
-# Optimized for Intel XPU with MPI support
+# Optimized for NVIDIA GPUs with MPI support
+#
+# QUICK START:
+# 1. Edit the HARDCODED SETTINGS section below with your paths
+# 2. Run: ./run_polaris.sh --submit
+#
+# For help: ./run_polaris.sh --help
 
 set -e
 
 # =============================================================================
-# AURORA-SPECIFIC CONFIGURATION
+# POLARIS-SPECIFIC CONFIGURATION
 # =============================================================================
 
-# Default Polaris settings
-PWD="/eagle/FoundEpidem/avasan/IDEAL/DiffusionModels/prot_lig_discdiff"
-CONFIG_FILE="${PWD}/config_protein.yaml"
-DATA_FILE="${PWD}/input_data/processed_uniref50.pt"  # CHANGE THIS
-WORK_DIR="${PWD}/experiments/sedd_$(date +%Y%m%d_%H%M%S)"  # CHANGE PROJECT PATH
+# *** HARDCODED SETTINGS - MODIFY THESE FOR YOUR SETUP ***
+# Set these to your actual paths and preferences to avoid specifying them every time
+#
+# EXAMPLE CONFIGURATION:
+# PROJECT_ROOT="/eagle/YourProject/username/prot_lig_discdiff"
+# HARDCODED_CONFIG_FILE="${PROJECT_ROOT}/config_protein.yaml"
+# HARDCODED_DATA_FILE="${PROJECT_ROOT}/data/processed_uniref50.pt"
+# HARDCODED_ACCOUNT="YourAllocation"
 
-# Polaris-specific defaults
-DEVICE="cuda:0"
-CLUSTER="polaris"
-WANDB_PROJECT="protein-discrete-diffusion-aurora"
-NODES=1
-PPN=4  # Processes per node (Polaris has 4 GPUs per node)
+# Project paths (MODIFY THESE TO YOUR ACTUAL PATHS)
+PROJECT_ROOT="/eagle/FoundEpidem/avasan/IDEAL/DiffusionModels/prot_lig_discdiff"
+HARDCODED_CONFIG_FILE="${PROJECT_ROOT}/config_protein.yaml"
+HARDCODED_DATA_FILE="${PROJECT_ROOT}/input_data/processed_uniref50.pt"
+HARDCODED_WORK_DIR="${PROJECT_ROOT}/experiments/sedd_$(date +%Y%m%d_%H%M%S)"
+
+# Job settings (MODIFY AS NEEDED)
+HARDCODED_ACCOUNT=""  # *** SET YOUR POLARIS ACCOUNT/ALLOCATION HERE ***
+HARDCODED_TIME_LIMIT=2  # Hours
+HARDCODED_QUEUE="workq"
+
+# Training settings (MODIFY AS NEEDED)
+HARDCODED_WANDB_PROJECT="protein-discrete-diffusion-polaris"
+HARDCODED_WANDB_NAME="polaris-run-$(date +%Y%m%d_%H%M%S)"
+HARDCODED_NODES=1
+HARDCODED_PPN=4  # Processes per node (Polaris has 4 GPUs per node)
+HARDCODED_SEED=42
+
+# Advanced settings (usually don't need to change)
+HARDCODED_DEVICE="cuda:0"
+HARDCODED_CLUSTER="polaris"
+
+# *** END HARDCODED SETTINGS ***
+
+# Default values (will be overridden by hardcoded values if set, or command line args)
+CONFIG_FILE="${HARDCODED_CONFIG_FILE:-config_protein.yaml}"
+DATA_FILE="${HARDCODED_DATA_FILE:-}"
+WORK_DIR="${HARDCODED_WORK_DIR:-./experiments/sedd_$(date +%Y%m%d_%H%M%S)}"
+WANDB_PROJECT="${HARDCODED_WANDB_PROJECT:-protein-discrete-diffusion-polaris}"
+WANDB_NAME="${HARDCODED_WANDB_NAME:-polaris-run-$(date +%Y%m%d_%H%M%S)}"
+NODES="${HARDCODED_NODES:-1}"
+PPN="${HARDCODED_PPN:-4}"
+TIME_LIMIT="${HARDCODED_TIME_LIMIT:-2}"
+QUEUE="${HARDCODED_QUEUE:-workq}"
+ACCOUNT="${HARDCODED_ACCOUNT:-}"
+DEVICE="${HARDCODED_DEVICE:-cuda:0}"
+CLUSTER="${HARDCODED_CLUSTER:-polaris}"
+SEED="${HARDCODED_SEED:-42}"
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -30,23 +71,38 @@ print_usage() {
     echo "Polaris Cluster Training Script"
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Options:"
-    echo "  --data PATH          Path to training data file (required)"
-    echo "  --config PATH        Path to config file (default: $CONFIG_FILE)"
-    echo "  --work_dir PATH      Working directory (default: auto-generated)"
-    echo "  --nodes NUM          Number of nodes (default: $NODES)"
-    echo "  --ppn NUM            Processes per node (default: $PPN)"
-    echo "  --wandb_project NAME Wandb project name (default: $WANDB_PROJECT)"
-    echo "  --wandb_name NAME    Wandb run name (default: auto-generated)"
-    echo "  --time HOURS         Job time limit in hours (default: 2)"
-    echo "  --queue QUEUE        Queue name (default: workq)"
-    echo "  --account ACCOUNT    Account/allocation name (required for submission)"
+    echo "🔧 HARDCODED SETTINGS (modify at top of script):"
+    echo "  Config file:    ${HARDCODED_CONFIG_FILE:-'Not set'}"
+    echo "  Data file:      ${HARDCODED_DATA_FILE:-'Not set'}"
+    echo "  Work directory: ${HARDCODED_WORK_DIR:-'Not set'}"
+    echo "  Account:        ${HARDCODED_ACCOUNT:-'Not set'}"
+    echo "  Nodes:          ${HARDCODED_NODES:-'Not set'}"
+    echo "  PPN:            ${HARDCODED_PPN:-'Not set'}"
+    echo ""
+    echo "Options (override hardcoded settings):"
+    echo "  --data PATH          Path to training data file"
+    echo "  --config PATH        Path to config file"
+    echo "  --work_dir PATH      Working directory"
+    echo "  --nodes NUM          Number of nodes"
+    echo "  --ppn NUM            Processes per node"
+    echo "  --wandb_project NAME Wandb project name"
+    echo "  --wandb_name NAME    Wandb run name"
+    echo "  --time HOURS         Job time limit in hours"
+    echo "  --queue QUEUE        Queue name"
+    echo "  --account ACCOUNT    Account/allocation name"
+    echo "  --seed NUM           Random seed"
     echo "  --submit             Submit as PBS job instead of interactive run"
     echo "  --help               Show this help message"
     echo ""
     echo "Examples:"
+    echo "  # Use all hardcoded settings (if configured)"
+    echo "  $0 --submit"
+    echo ""
+    echo "  # Override specific settings"
+    echo "  $0 --data /path/to/data.pt --account your_account --submit"
+    echo ""
     echo "  # Interactive training (for testing)"
-    echo "  $0 --data /path/to/data.jsonl --account your_account"
+    echo "  $0 --data /path/to/data.pt --account your_account"
     echo ""
     echo "  # Submit as job"
     echo "  $0 --data /path/to/data.jsonl --account your_account --submit --time 8"
@@ -96,15 +152,15 @@ cd \$PBS_O_WORKDIR
 
 # Run training with MPI
 mpiexec -n \$((${NODES} * ${PPN})) -ppn ${PPN} \\
-    python run_train_clean.py \\
+    python protlig_ddiff/train/run_train_clean.py \\
     --config ${CONFIG_FILE} \\
     --datafile ${DATA_FILE} \\
     --work_dir ${WORK_DIR} \\
-    --device xpu:0 \\
-    --cluster aurora \\
+    --device ${DEVICE} \\
+    --cluster ${CLUSTER} \\
     --wandb_project ${WANDB_PROJECT} \\
     --wandb_name ${WANDB_NAME} \\
-    --seed 42
+    --seed ${SEED}
 
 echo "Training completed at: \$(date)"
 
@@ -122,10 +178,7 @@ EOF
 # ARGUMENT PARSING
 # =============================================================================
 
-WANDB_NAME="aurora-disc-diff-$(date +%Y%m%d_%H%M%S)"
-TIME_LIMIT=2
-QUEUE="workq"
-ACCOUNT=""
+# Initialize with hardcoded defaults (can be overridden by command line)
 SUBMIT=false
 
 while [[ $# -gt 0 ]]; do
@@ -170,6 +223,10 @@ while [[ $# -gt 0 ]]; do
             ACCOUNT="$2"
             shift 2
             ;;
+        --seed)
+            SEED="$2"
+            shift 2
+            ;;
         --submit)
             SUBMIT=true
             shift
@@ -198,27 +255,48 @@ main() {
     # Check required arguments
     if [[ -z "$ACCOUNT" ]]; then
         echo "❌ Account/allocation name is required for Polaris"
-        echo "💡 Use --account your_allocation_name"
+        if [[ -n "$HARDCODED_ACCOUNT" ]]; then
+            echo "💡 Set HARDCODED_ACCOUNT in the script or use --account your_allocation_name"
+        else
+            echo "💡 Use --account your_allocation_name or set HARDCODED_ACCOUNT in the script"
+        fi
         exit 1
     fi
-    
+
+    if [[ -z "$DATA_FILE" ]]; then
+        echo "❌ Data file path is required"
+        echo "💡 Set HARDCODED_DATA_FILE in the script or use --data /path/to/data.pt"
+        exit 1
+    fi
+
     if [[ ! -f "$DATA_FILE" ]]; then
         echo "❌ Data file not found: $DATA_FILE"
-        echo "💡 Update the DATA_FILE path in this script or use --data"
+        echo "💡 Check the path and ensure the file exists"
+        exit 1
+    fi
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "❌ Config file not found: $CONFIG_FILE"
+        echo "💡 Check the path or set HARDCODED_CONFIG_FILE in the script"
         exit 1
     fi
     
     # Print configuration
-    echo "📊 Configuration:"
+    echo "📊 Final Configuration:"
     echo "   Data file:      $DATA_FILE"
     echo "   Config file:    $CONFIG_FILE"
     echo "   Work directory: $WORK_DIR"
+    echo "   Wandb project:  $WANDB_PROJECT"
+    echo "   Wandb name:     $WANDB_NAME"
     echo "   Nodes:          $NODES"
     echo "   Processes/node: $PPN"
     echo "   Total ranks:    $((NODES * PPN))"
     echo "   Account:        $ACCOUNT"
     echo "   Time limit:     ${TIME_LIMIT}h"
     echo "   Queue:          $QUEUE"
+    echo "   Device:         $DEVICE"
+    echo "   Cluster:        $CLUSTER"
+    echo "   Seed:           $SEED"
     echo ""
     
     # Create work directory
@@ -279,11 +357,11 @@ main() {
             --config "$CONFIG_FILE" \
             --datafile "$DATA_FILE" \
             --work_dir "$WORK_DIR" \
-            --device cuda:0 \
-            --cluster polaris \
+            --device "$DEVICE" \
+            --cluster "$CLUSTER" \
             --wandb_project "$WANDB_PROJECT" \
             --wandb_name "$WANDB_NAME" \
-            --seed 42 \
+            --seed "$SEED" \
             2>&1 | tee "$WORK_DIR/training.log"
         
         if [[ ${PIPESTATUS[0]} -eq 0 ]]; then

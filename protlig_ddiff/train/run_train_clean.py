@@ -159,19 +159,39 @@ class UniRef50Trainer:
         # Set random seeds
         torch.manual_seed(self.config.seed)
         np.random.seed(self.config.seed)
-        
-        # Setup device
-        if self.config.devicetype in ['cuda', 'xpu']:
-            self.device = torch.device(f'{self.config.devicetype}:{self.config.device}')
-            print(self.device)
-        #if self.config.devicetype == 'xpu':
-        #    self.device = torch.device(f'{self.config.devicetype}:{self.config.device}')
-        #elif self.config.device.startswith('cuda'):
-        #    self.device = torch.device(self.config.device)
-        else:
+
+        # Setup device with improved logic
+        device_str = str(self.config.device).lower()
+
+        if device_str == 'cpu':
             self.device = torch.device('cpu')
-        
+        elif device_str.startswith('cuda:') or device_str.startswith('xpu:'):
+            # Full device specification like 'cuda:0' or 'xpu:0'
+            self.device = torch.device(device_str)
+        elif device_str.isdigit():
+            # Just a number like '0', '1', etc. - assume CUDA
+            self.device = torch.device(f'cuda:{device_str}')
+        elif self.config.devicetype in ['cuda', 'xpu']:
+            # Legacy devicetype + device combination
+            self.device = torch.device(f'{self.config.devicetype}:{self.config.device}')
+        else:
+            # Default to CPU
+            self.device = torch.device('cpu')
+
+        # Verify device availability
+        if self.device.type == 'cuda':
+            if not torch.cuda.is_available():
+                print("⚠️  CUDA not available, falling back to CPU")
+                self.device = torch.device('cpu')
+            elif self.device.index is not None and self.device.index >= torch.cuda.device_count():
+                print(f"⚠️  GPU {self.device.index} not available, using GPU 0")
+                self.device = torch.device('cuda:0')
+
         print(f"🔧 Environment setup: device={self.device}, seed={self.config.seed}")
+
+        # Set CUDA device if using GPU
+        if self.device.type == 'cuda':
+            torch.cuda.set_device(self.device)
         
     def load_training_config(self):
         """Load and parse training configuration."""
@@ -667,15 +687,15 @@ def parse_args():
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     parser.add_argument("--datafile", type=str, required=True, help="Path to training data")
     parser.add_argument("--work_dir", type=str, default="./work_dir", help="Working directory")
-    parser.add_argument("--device", type=str, default="cpu", help="Device to use")
+    parser.add_argument("--device", type=str, default="cpu", help="Device to use (e.g., 'cpu', '0', 'cuda:0')")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("--resume_checkpoint", type=str, help="Resume from checkpoint")
     parser.add_argument("--wandb_project", type=str, default="sedd-training", help="Wandb project name")
     parser.add_argument("--wandb_name", type=str, help="Wandb run name")
-    
+
     # DDP arguments
-    parser.add_argument("--cluster", type=str, choices=["aurora", "polaris"], help="Cluster type for DDP")
+    parser.add_argument("--cluster", type=str, choices=["aurora", "polaris"], help="Cluster type for DDP (omit for single GPU)")
     
     return parser.parse_args()
 
