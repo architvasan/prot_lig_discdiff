@@ -483,18 +483,24 @@ class UniRef50Trainer:
 
     def sample_sequences(self, step):
         """Sample sequences during training for monitoring."""
+        print(f"🔍 Debug: sample_sequences called at step {step}, is_main_process: {is_main_process()}")
+
         if not is_main_process():
             return  # Only sample on main process
 
         try:
             # Get sampling config
             sampling_config = getattr(self.config, 'sampling', None)
+            print(f"🔍 Debug: sampling_config: {sampling_config}")
+
             if sampling_config is None:
-                # Skip sampling if not configured
+                print("🔍 Debug: No sampling config found, skipping sampling")
                 return
 
             # Check if we should sample at this step
             sample_interval = getattr(sampling_config, 'sample_interval', 100)
+            print(f"🔍 Debug: sample_interval: {sample_interval}, step % interval: {step % sample_interval}")
+
             if step % sample_interval != 0:
                 return
 
@@ -502,8 +508,10 @@ class UniRef50Trainer:
 
             # Use EMA model if available, otherwise use main model
             model_to_use = self.ema_model.ema_model if self.ema_model else self.model
+            print(f"🔍 Debug: Using model: {'EMA' if self.ema_model else 'main'}")
 
             # Sample sequences
+            print(f"🔍 Debug: Calling sample_during_training...")
             sequences = sample_during_training(
                 model=model_to_use,
                 graph=self.graph,
@@ -512,6 +520,7 @@ class UniRef50Trainer:
                 step=step,
                 device=self.device
             )
+            print(f"🔍 Debug: Got {len(sequences) if sequences else 0} sequences")
 
             # Print sequences to console
             if sequences:
@@ -519,9 +528,12 @@ class UniRef50Trainer:
                 for i, seq in enumerate(sequences[:3]):  # Show first 3
                     clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
                     print(f"  Sample {i+1}: {clean_seq[:80]}{'...' if len(clean_seq) > 80 else ''}")
+            else:
+                print("🔍 Debug: No sequences generated")
 
             # Log to wandb if available
             if self.wandb_run is not None and sequences:
+                print(f"🔍 Debug: Logging {len(sequences)} sequences to wandb")
                 # Log first few sequences as text
                 sample_text = "\n".join([f"Sample {i+1}: {seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()[:100]}..."
                                        for i, seq in enumerate(sequences[:3])])
@@ -529,9 +541,13 @@ class UniRef50Trainer:
                     "samples/sequences": sample_text,
                     "samples/step": step
                 }, step=step)
+            else:
+                print(f"🔍 Debug: Not logging to wandb - wandb_run: {self.wandb_run is not None}, sequences: {len(sequences) if sequences else 0}")
 
         except Exception as e:
             print(f"⚠️  Sampling failed at step {step}: {e}")
+            import traceback
+            traceback.print_exc()
             # Don't let sampling errors stop training
     
     def train_step(self, batch):
@@ -728,23 +744,29 @@ class UniRef50Trainer:
     def log_training_metrics(self):
         """Log training metrics."""
         metrics = self.metrics.get_averages(window=100)
-        
+
         # Add timing information
         elapsed_time = time.time() - self.start_time
         metrics['elapsed_time'] = elapsed_time
         metrics['steps_per_second'] = self.current_step / elapsed_time
-        
+
+        # Debug: Check if we have wandb
+        print(f"🔍 Debug: wandb_run exists: {hasattr(self, 'wandb_run')}, is not None: {getattr(self, 'wandb_run', None) is not None}")
+
         # Log to wandb if available
         if hasattr(self, 'wandb_run') and self.wandb_run is not None:
+            print(f"🔍 Debug: Logging metrics to wandb at step {self.current_step}: {list(metrics.keys())}")
             log_metrics(metrics, self.current_step, wandb_run=self.wandb_run)
-        
+        else:
+            print(f"🔍 Debug: No wandb logging - wandb_run: {getattr(self, 'wandb_run', 'not set')}")
+
         # Print summary only occasionally to reduce noise
         if self.current_step % 100 == 0:
             print(f"\n📊 Step {self.current_step} | "
-                  f"Loss: {metrics['loss']:.4f} | "
-                  f"Acc: {metrics['accuracy']:.3f} | "
-                  f"PPL: {metrics['perplexity']:.2f} | "
-                  f"LR: {metrics['learning_rate']:.2e} | "
+                  f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
+                  f"Acc: {metrics.get('accuracy', 0):.3f} | "
+                  f"PPL: {metrics.get('perplexity', 0):.2f} | "
+                  f"LR: {metrics.get('learning_rate', 0):.2e} | "
                   f"Time: {format_time(elapsed_time)}")
     
     def save_training_checkpoint(self):

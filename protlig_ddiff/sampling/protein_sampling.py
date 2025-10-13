@@ -239,7 +239,7 @@ def create_protein_sampler(model, graph, noise, tokenizer=None, device='cuda'):
 def sample_during_training(model, graph, noise, config, step, device='cuda'):
     """
     Sample sequences during training for monitoring/logging.
-    
+
     Args:
         model: Current model state
         graph: Graph object
@@ -247,45 +247,87 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
         config: Training config with sampling parameters
         step: Current training step
         device: Device to run on
-        
+
     Returns:
         List of sampled protein sequences
     """
-    
+
+    print(f"🔍 Debug: sample_during_training called at step {step}")
+
     # Get sampling config
     sampling_config = getattr(config, 'sampling', None)
+    print(f"🔍 Debug: sampling_config from config: {sampling_config}")
+    print(f"🔍 Debug: config type: {type(config)}")
+    print(f"🔍 Debug: config attributes: {dir(config) if hasattr(config, '__dict__') else 'no __dict__'}")
+
     if sampling_config is None:
+        print("🔍 Debug: Using default sampling config")
         # Default sampling config
         batch_size = 4
         max_length = 128
         steps = 256
         predictor = 'analytic'
     else:
-        batch_size = getattr(sampling_config, 'eval_batch_size', 4)
-        max_length = getattr(sampling_config, 'eval_max_length', 128)
-        steps = getattr(sampling_config, 'eval_steps', 256)
-        predictor = getattr(sampling_config, 'predictor', 'analytic')
-    
+        # Try different ways to access the config values
+        if hasattr(sampling_config, 'eval_batch_size'):
+            batch_size = sampling_config.eval_batch_size
+        elif hasattr(sampling_config, 'get'):
+            batch_size = sampling_config.get('eval_batch_size', 4)
+        else:
+            batch_size = getattr(sampling_config, 'eval_batch_size', 4)
+
+        if hasattr(sampling_config, 'eval_max_length'):
+            max_length = sampling_config.eval_max_length
+        elif hasattr(sampling_config, 'get'):
+            max_length = sampling_config.get('eval_max_length', 128)
+        else:
+            max_length = getattr(sampling_config, 'eval_max_length', 128)
+
+        if hasattr(sampling_config, 'eval_steps'):
+            steps = sampling_config.eval_steps
+        elif hasattr(sampling_config, 'get'):
+            steps = sampling_config.get('eval_steps', 256)
+        else:
+            steps = getattr(sampling_config, 'eval_steps', 256)
+
+        if hasattr(sampling_config, 'predictor'):
+            predictor = sampling_config.predictor
+        elif hasattr(sampling_config, 'get'):
+            predictor = sampling_config.get('predictor', 'analytic')
+        else:
+            predictor = getattr(sampling_config, 'predictor', 'analytic')
+
+        print(f"🔍 Debug: Using config - batch_size: {batch_size}, max_length: {max_length}, steps: {steps}, predictor: {predictor}")
+
     # Create sampler
+    print(f"🔍 Debug: Creating ProteinSampler...")
     sampler = ProteinSampler(model, graph, noise, device=device)
-    
+
     # Sample sequences
     try:
+        print(f"🔍 Debug: Starting sampling...")
         sequences = sampler.sample_unconditional(
             batch_size=batch_size,
             max_length=max_length,
             steps=steps,
             predictor=predictor
         )
-        
-        print(f"\n🧬 Sampled sequences at step {step}:")
-        for i, seq in enumerate(sequences):
-            # Clean up sequence for display
-            clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
-            print(f"  Sample {i+1}: {clean_seq[:50]}{'...' if len(clean_seq) > 50 else ''}")
-        
+
+        print(f"🔍 Debug: Sampling completed, got {len(sequences)} sequences")
+
+        if sequences:
+            print(f"\n🧬 Sampled sequences at step {step}:")
+            for i, seq in enumerate(sequences):
+                # Clean up sequence for display
+                clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
+                print(f"  Sample {i+1}: {clean_seq[:50]}{'...' if len(clean_seq) > 50 else ''}")
+        else:
+            print(f"🔍 Debug: No sequences generated")
+
         return sequences
-        
+
     except Exception as e:
         print(f"⚠️  Sampling failed at step {step}: {e}")
+        import traceback
+        traceback.print_exc()
         return []
