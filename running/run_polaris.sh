@@ -248,7 +248,7 @@ done
 # =============================================================================
 
 main() {
-    export AFFINITY_MASK=./set_affinity_gpu_polaris.sh
+    export AFFINITY_MASK=./running/set_affinity_gpu_polaris.sh
     echo "🌌 Polaris Cluster Protein Discrete Diffusion Training"
     echo "======================================="
     
