@@ -130,7 +130,7 @@ def _setup_ddp_polaris(rank, world_size):
 ### Main Training config
 
 @dataclass
-class TrainerConfig:
+class _TrainerConfig:
     """Configuration for the trainer."""
     work_dir: str
     config_file: str
@@ -142,6 +142,28 @@ class TrainerConfig:
     seed: int = 42
     use_wandb: bool = True
     resume_checkpoint: Optional[str] = None
+
+@dataclass
+class TrainerConfig:
+    dictionary: dict | None = None
+    yamlfile: str | None = None
+
+    def __post_init__(self):
+        if self.dictionary is None and self.yamlfile is not None:
+            with open(self.yamlfile, "r") as f:
+                self.dictionary = yaml.safe_load(f)
+        
+        if self.dictionary is None:
+            # Handle case where both dictionary and yamlfile are None
+            self.dictionary = {}
+        
+        for key, value in self.dictionary.items():
+            if isinstance(value, dict):
+                value = Config(dictionary=value)
+            setattr(self, key, value)
+    
+    def __getitem__(self, key):
+        return getattr(self, key)
 
 
 class UniRef50Trainer:
@@ -206,8 +228,12 @@ class UniRef50Trainer:
         # Setup graph and noise
         vocab_size = getattr(self.train_config, 'tokens', 33)
         self.graph = graph_lib.Absorbing(vocab_size - 1)  # vocab_size includes absorbing token
-        self.noise = noise_lib.LogLinearNoise()
+        if self.config.noise.type == 'loglinear':
+            self.noise = noise_lib.LogLinearNoise()
         
+        if self.config.noise.type == 'cosine':
+            self.noise = noise_lib.CosineNoise()
+
         # Setup model
         self.model = DiscDiffModel(self.train_config).to(self.device)
         
@@ -329,24 +355,25 @@ class UniRef50Trainer:
                     old_handler = signal.signal(signal.SIGALRM, timeout_handler)
                     signal.alarm(30)
 
-                    try:
-                        test_iter = iter(self.train_loader)
-                        test_batch = next(test_iter)
-                        del test_iter, test_batch  # Clean up
-                        signal.alarm(0)  # Cancel timeout
-                        signal.signal(signal.SIGALRM, old_handler)  # Restore handler
-                        print(f"✅ DataLoader test successful with {workers} workers")
+                    if False:
+                        try:
+                            test_iter = iter(self.train_loader)
+                            test_batch = next(test_iter)
+                            del test_iter, test_batch  # Clean up
+                            signal.alarm(0)  # Cancel timeout
+                            signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                            print(f"✅ DataLoader test successful with {workers} workers")
 
-                        if workers != num_workers:
-                            print(f"🔧 Reduced num_workers to {workers} to avoid issues")
-                        break
-                    except TimeoutError:
-                        signal.alarm(0)  # Cancel timeout
-                        signal.signal(signal.SIGALRM, old_handler)  # Restore handler
-                        print(f"⏰ DataLoader test timed out with {workers} workers")
-                        if workers == 0:
-                            raise  # If even 0 workers fails, something is seriously wrong
-                        continue  # Try with fewer workers
+                            if workers != num_workers:
+                                print(f"🔧 Reduced num_workers to {workers} to avoid issues")
+                            break
+                        except TimeoutError:
+                            signal.alarm(0)  # Cancel timeout
+                            signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                            print(f"⏰ DataLoader test timed out with {workers} workers")
+                            if workers == 0:
+                                raise  # If even 0 workers fails, something is seriously wrong
+                            continue  # Try with fewer workers
 
             except (OSError, RuntimeError, TimeoutError) as e:
                 error_msg = str(e)

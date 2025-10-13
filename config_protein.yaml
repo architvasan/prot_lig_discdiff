@@ -30,14 +30,14 @@ training:
 # Data configuration
 data:
   max_length: 512            # Maximum sequence length
-  tokenize_on_fly: false     # Set to true if data is not pre-tokenized
+  tokenize_on_fly: true     # Set to true if data is not pre-tokenized
   use_streaming: false       # Set to true for very large datasets
   num_workers: 4             # Data loading workers
   pin_memory: true           # Pin memory for faster GPU transfer
 
 # Noise schedule - LogLinear works well for proteins
 noise:
-  type: "loglinear"          # Noise schedule type
+  type: "cosine"          # Noise schedule type
   eps: 1e-3                  # Small epsilon for numerical stability
   sigma_min: 1e-4            # Minimum noise level
   sigma_max: 2.0             # Maximum noise level

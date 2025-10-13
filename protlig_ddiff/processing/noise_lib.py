@@ -152,7 +152,7 @@ class LogLinearNoise(Noise, nn.Module):
 
     Total noise is -log(1 - (1 - eps) * t), so the sigma will be (1 - eps) * t
     """
-    def __init__(self, eps=1e-3):
+    def __init__(self, eps=1e-3, sigma=0.1, dsigma=0.01):
         super().__init__()
         self.eps = eps
         self.empty = nn.Parameter(torch.tensor(0.0))
