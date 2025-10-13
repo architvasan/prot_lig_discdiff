@@ -486,7 +486,8 @@ class UniRef50Trainer:
         print(f"🔍 Debug: sample_sequences called at step {step}, is_main_process: {is_main_process()}")
 
         if not is_main_process():
-            return  # Only sample on main process
+            print("not main process but still sampling")
+            #return  # Only sample on main process
 
         try:
             # Get sampling config
@@ -606,7 +607,7 @@ class UniRef50Trainer:
         epoch_metrics = TrainingMetrics()
 
         # Setup progress bar with timeout protection
-        if is_main_process():
+        if True:
             pbar = tqdm(self.train_loader, desc=f"Training",
                        disable=False, dynamic_ncols=True, leave=False)
         else:
@@ -636,6 +637,7 @@ class UniRef50Trainer:
                 # Training step with timeout protection
                 try:
                     loss, accuracy, perplexity = self.train_step(batch)
+                    print(loss, accuracy, perplexity)
                 except Exception as e:
                     print(f"❌ Training step failed on rank {self.config.rank}: {e}")
                     # Skip this batch and continue
@@ -652,19 +654,19 @@ class UniRef50Trainer:
                         max_norm=self.config.training.get('gradient_clip_norm', 1.0)
                     )
 
-                self.optimizer.step()
-                self.scheduler.step()
-                self.optimizer.zero_grad()
+                    self.optimizer.step()
+                    self.scheduler.step()
+                    self.optimizer.zero_grad()
 
-                # Update EMA
-                if self.ema_model is not None:
-                    self.ema_model.update(self.model.module if hasattr(self.model, 'module') else self.model)
+                    # Update EMA
+                    if self.ema_model is not None:
+                        self.ema_model.update(self.model.module if hasattr(self.model, 'module') else self.model)
 
-                # Reset accumulation counter
-                self.accumulation_step = 0
+                    # Reset accumulation counter
+                    self.accumulation_step = 0
 
-                # Increment step counter (only after actual optimization step)
-                self.current_step += 1
+                    # Increment step counter (only after actual optimization step)
+                    self.current_step += 1
             else:
                 # No optimization step, set grad_norm to 0 for logging
                 grad_norm = 0.0
@@ -692,7 +694,7 @@ class UniRef50Trainer:
             )
             
             # Update progress bar
-            if is_main_process():
+            if True:#is_main_process():
                 # Create a more informative progress bar
                 postfix_dict = {
                     'loss': f"{loss:.4f}",
@@ -709,15 +711,15 @@ class UniRef50Trainer:
                 pbar.set_postfix(postfix_dict)
 
             # Log metrics periodically (only after actual optimization steps)
-            if self.accumulation_step == 0 and self.current_step % 20 == 0 and is_main_process():
+            if self.current_step % 20 == 0:# and is_main_process():
                 self.log_training_metrics()
 
             # Sample sequences periodically
-            if self.accumulation_step == 0 and self.current_step % 100 == 0 and is_main_process():
+            if self.current_step % 100 == 0:# and is_main_process():
                 self.sample_sequences(self.current_step)
 
                 # Save checkpoint periodically (only after actual optimization steps)
-                if self.accumulation_step == 0 and self.current_step % 5000 == 0 and is_main_process():
+                if self.accumulation_step == 0 and self.current_step % 5000 == 0:# and is_main_process():
                     try:
                         self.save_training_checkpoint()
                     except Exception as e:
@@ -736,7 +738,7 @@ class UniRef50Trainer:
 
         finally:
             # Ensure progress bar is closed
-            if is_main_process() and hasattr(pbar, 'close'):
+            if hasattr(pbar, 'close'): #is_main_process() and 
                 pbar.close()
 
         return epoch_metrics.get_averages()
@@ -789,7 +791,7 @@ class UniRef50Trainer:
     def train(self, wandb_project=None, wandb_name=None):
         """Main training loop."""
         # Setup wandb with timeout protection
-        if self.config.use_wandb and is_main_process():
+        if self.config.use_wandb :##and is_main_process():
             try:
                 print("🔧 Setting up Wandb...")
                 import signal

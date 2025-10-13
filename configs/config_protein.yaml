@@ -31,7 +31,7 @@ training:
 data:
   max_length: 512            # Maximum sequence length
   tokenize_on_fly: true     # Set to true if data is not pre-tokenized
-  use_streaming: false       # Set to true for very large datasets
+  use_streaming: true       # Set to true for very large datasets
   num_workers: 0             # Data loading workers
   pin_memory: true           # Pin memory for faster GPU transfer
 
