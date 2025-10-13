@@ -26,7 +26,7 @@ set -e
 
 # Project paths (MODIFY THESE TO YOUR ACTUAL PATHS)
 PROJECT_ROOT="/eagle/FoundEpidem/avasan/IDEAL/DiffusionModels/prot_lig_discdiff"
-HARDCODED_CONFIG_FILE="${PROJECT_ROOT}/config_protein.yaml"
+HARDCODED_CONFIG_FILE="${PROJECT_ROOT}/configs/config_protein.yaml"
 HARDCODED_DATA_FILE="${PROJECT_ROOT}/input_data/processed_uniref50.pt"
 HARDCODED_WORK_DIR="${PROJECT_ROOT}/experiments/sedd_$(date +%Y%m%d_%H%M%S)"
 

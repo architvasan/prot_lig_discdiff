@@ -491,11 +491,13 @@ class UniRef50Trainer:
         # Sample time and noise
         print(f"🔄 train_step: Sampling time and noise")
         t = torch.rand(batch_size, device=self.device)
-        sigma = self.noise.sigma(t)
+        sigma, dsigma = self.noise(t)
         print(f"🔄 train_step: Time and noise sampled")
 
         # Corrupt data
-        xt = self.graph.sample_transition(x0, sigma)
+        xt = self.graph.sample_transition(x0, sigma[:, None])
+        #print(f"{xt.shape=}")
+        #print(f"{x0.shape=}")
 
         # Forward pass
         if self.config.training.get('use_subs_loss', True):
@@ -503,14 +505,15 @@ class UniRef50Trainer:
             model_output = self.model(xt, sigma, use_subs=True)
 
             # Compute SUBS loss with curriculum learning
-            loss = subs_loss_with_curriculum(
+            loss, curric_dict = subs_loss_with_curriculum(
                 model_output=model_output,
                 x0=x0,
                 sigma=sigma,
                 noise_schedule=self.noise,
-                step=self.current_step,
-                curriculum_config=self.config.curriculum
+                training_step=self.current_step,
+                #curriculum_config=self.config.curriculum
             )
+            print(f"{loss=}")
         else:
             # Original score-based loss (placeholder - implement if needed)
             model_output = self.model(xt, sigma, use_subs=False)
