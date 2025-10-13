@@ -1,6 +1,8 @@
 """
 Clean and organized training script for UniRef50 discrete diffusion training.
 """
+from mpi4py import MPI
+print("loaded MPI")
 import os
 import sys
 import time
@@ -23,7 +25,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Import utilities
-from protlig_ddiff.utils.ddp_utils import setup_ddp_aurora, setup_ddp_polaris, cleanup_ddp, is_main_process, get_rank, get_world_size
+from protlig_ddiff.utils.ddp_utils import  cleanup_ddp, is_main_process, get_rank, get_world_size, setup_ddp_polaris, setup_ddp_aurora
 from protlig_ddiff.utils.data_utils import UniRef50Dataset, ProteinTokenizer
 from protlig_ddiff.utils.config_utils import load_config, create_namespace_from_dict, print_config_summary
 from protlig_ddiff.utils.training_utils import (
@@ -41,6 +43,44 @@ import protlig_dd.processing.graph_lib as graph_lib
 import protlig_dd.processing.noise_lib as noise_lib
 from protlig_ddiff.models.transformer_v100 import DiscDiffModel
 
+#### Setup DDP on Polaris
+####
+def _setup_ddp_polaris(rank, world_size):
+    """Setup DDP for Polaris cluster."""
+    #from mpi4py import MPI
+    MPI_AVAILABLE=True
+    if not MPI_AVAILABLE:
+        raise RuntimeError("MPI not available - cannot setup Polaris DDP")
+
+    # DDP: Set environmental variables used by PyTorch
+    SIZE = MPI.COMM_WORLD.Get_size()
+    RANK = MPI.COMM_WORLD.Get_rank()
+    print(SIZE, RANK)
+    LOCAL_RANK = int(os.environ.get('PMI_LOCAL_RANK', '0'))
+
+    # Set environment variables
+    os.environ['RANK'] = str(RANK)
+    os.environ['WORLD_SIZE'] = str(SIZE)
+    os.environ['LOCAL_RANK'] = str(LOCAL_RANK)
+
+    # Setup master address for Polaris
+    MASTER_ADDR = socket.gethostname() if RANK == 0 else None
+    MASTER_ADDR = MPI.COMM_WORLD.bcast(MASTER_ADDR, root=0)
+    os.environ['MASTER_ADDR'] = MASTER_ADDR
+    os.environ['MASTER_PORT'] = str(2345)
+
+    print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
+
+    # Initialize distributed communication
+    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+
+    # Set CUDA device
+    device_id = rank % torch.cuda.device_count()
+    torch.cuda.set_device(device_id)
+    
+    return dist.get_rank(), device_id, dist.get_world_size()
+
+### Main Training config
 
 @dataclass
 class TrainerConfig:
@@ -51,6 +91,7 @@ class TrainerConfig:
     rank: int = 0
     world_size: int = 1
     device: str = 'cpu'
+    devicetype: str = 'cuda'
     seed: int = 42
     use_wandb: bool = True
     resume_checkpoint: Optional[str] = None
@@ -73,10 +114,13 @@ class UniRef50Trainer:
         np.random.seed(self.config.seed)
         
         # Setup device
-        if self.config.device.startswith('xpu'):
-            self.device = torch.device(self.config.device)
-        elif self.config.device.startswith('cuda'):
-            self.device = torch.device(self.config.device)
+        if self.config.devicetype in ['cuda', 'xpu']:
+            self.device = torch.device(f'{self.config.devicetype}:{self.config.device}')
+            print(self.device)
+        #if self.config.devicetype == 'xpu':
+        #    self.device = torch.device(f'{self.config.devicetype}:{self.config.device}')
+        #elif self.config.device.startswith('cuda'):
+        #    self.device = torch.device(self.config.device)
         else:
             self.device = torch.device('cpu')
         

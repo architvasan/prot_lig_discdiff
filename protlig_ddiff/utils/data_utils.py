@@ -146,6 +146,8 @@ class UniRef50Dataset(Dataset):
             with open(self.data_file, 'r') as f:
                 for line in f:
                     self.data.append(json.loads(line.strip()))
+        elif self.data_file.endswith('.pt'):
+            self.data = torch.load(self.data_file)
         else:
             raise ValueError(f"Unsupported file format: {self.data_file}")
         

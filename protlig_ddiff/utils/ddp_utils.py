@@ -1,27 +1,27 @@
 """
 Distributed Data Parallel (DDP) utilities for Aurora and Polaris clusters.
 """
-import os
-import socket
-import torch
-import torch.distributed as dist
-
 # Optional MPI import for Aurora
+#from mpi4py import MPI
 try:
     from mpi4py import MPI
     MPI_AVAILABLE = True
 except ImportError:
     MPI_AVAILABLE = False
     print("⚠️  MPI not available - DDP will be disabled")
+import os
+import socket
+import torch
+import torch.distributed as dist
 
 # Intel extensions for Aurora
-try:
-    import intel_extension_for_pytorch as ipex
-    import oneccl_bindings_for_pytorch as torch_ccl
-    INTEL_AVAILABLE = True
-except ImportError:
-    INTEL_AVAILABLE = False
-    print("⚠️  Intel extensions not found, running on CPU/CUDA")
+#try:
+#    import intel_extension_for_pytorch as ipex
+#    import oneccl_bindings_for_pytorch as torch_ccl
+#    INTEL_AVAILABLE = True
+#except ImportError:
+#    INTEL_AVAILABLE = False
+#    print("⚠️  Intel extensions not found, running on CPU/CUDA")
 
 
 def setup_ddp_aurora():
@@ -83,14 +83,15 @@ def setup_ddp_polaris(rank, world_size):
     MASTER_ADDR = socket.gethostname() if RANK == 0 else None
     MASTER_ADDR = MPI.COMM_WORLD.bcast(MASTER_ADDR, root=0)
     os.environ['MASTER_ADDR'] = MASTER_ADDR
-    os.environ['MASTER_PORT'] = str(2345)
+    os.environ['MASTER_PORT'] = str(12345)
 
     print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
 
     # Initialize distributed communication
-    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    torch.distributed.init_process_group(backend='nccl', init_method='env://', rank = int(RANK), world_size = int(SIZE))
 
     # Set CUDA device
+    rank = dist.get_rank()
     device_id = rank % torch.cuda.device_count()
     torch.cuda.set_device(device_id)
     
