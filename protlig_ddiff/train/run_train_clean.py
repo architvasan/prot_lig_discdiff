@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
+import yaml
 
 # Fix for AF_UNIX path too long error on HPC systems
 # Set a shorter temporary directory path before any multiprocessing operations
@@ -145,12 +146,21 @@ class _TrainerConfig:
 
 @dataclass
 class TrainerConfig:
+    work_dir: str
+    datafile: str
     dictionary: dict | None = None
-    yamlfile: str | None = None
+    config_file: str | None = None
+    rank: int = 0
+    world_size: int = 1
+    device: str = 'cpu'
+    devicetype: str = 'cuda'
+    seed: int = 42
+    use_wandb: bool = True
+    resume_checkpoint: Optional[str] = None
 
     def __post_init__(self):
-        if self.dictionary is None and self.yamlfile is not None:
-            with open(self.yamlfile, "r") as f:
+        if self.dictionary is None and self.config_file is not None:
+            with open(self.config_file, "r") as f:
                 self.dictionary = yaml.safe_load(f)
         
         if self.dictionary is None:
@@ -159,7 +169,7 @@ class TrainerConfig:
         
         for key, value in self.dictionary.items():
             if isinstance(value, dict):
-                value = Config(dictionary=value)
+                value = TrainerConfig(dictionary=value)
             setattr(self, key, value)
     
     def __getitem__(self, key):
