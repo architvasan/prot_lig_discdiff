@@ -146,34 +146,73 @@ class _TrainerConfig:
 
 @dataclass
 class TrainerConfig:
+    """Enhanced trainer configuration that loads and includes all YAML arguments."""
     work_dir: str
     datafile: str
-    dictionary: dict | None = None
     config_file: str | None = None
     rank: int = 0
     world_size: int = 1
     device: str = 'cpu'
-    devicetype: str = 'cuda'
     seed: int = 42
     use_wandb: bool = True
     resume_checkpoint: Optional[str] = None
 
+    # YAML config sections will be added dynamically
+    model: Optional[dict] = None
+    training: Optional[dict] = None
+    data: Optional[dict] = None
+    noise: Optional[dict] = None
+    curriculum: Optional[dict] = None
+    logging: Optional[dict] = None
+    optimizer: Optional[dict] = None
+    scheduler: Optional[dict] = None
+
+    # Top-level config values
+    tokens: int = 26
+    devicetype: str = 'cuda'
+
     def __post_init__(self):
-        if self.dictionary is None and self.config_file is not None:
+        """Load YAML config and set all values as attributes."""
+        if self.config_file is not None:
+            import yaml
             with open(self.config_file, "r") as f:
-                self.dictionary = yaml.safe_load(f)
-        
-        if self.dictionary is None:
-            # Handle case where both dictionary and yamlfile are None
-            self.dictionary = {}
-        
-        for key, value in self.dictionary.items():
-            if isinstance(value, dict):
-                value = TrainerConfig(dictionary=value)
-            setattr(self, key, value)
-    
+                config_dict = yaml.safe_load(f)
+
+            # Set all config values as attributes
+            for key, value in config_dict.items():
+                if isinstance(value, dict):
+                    # Convert dict to namespace-like object for easy access
+                    setattr(self, key, self._dict_to_namespace(value))
+                else:
+                    setattr(self, key, value)
+
+    def _dict_to_namespace(self, d):
+        """Convert dictionary to namespace-like object for dot notation access."""
+        class ConfigNamespace:
+            def __init__(self, dictionary):
+                for key, value in dictionary.items():
+                    if isinstance(value, dict):
+                        setattr(self, key, ConfigNamespace(value))
+                    else:
+                        setattr(self, key, value)
+
+            def __getattr__(self, name):
+                # Return None for missing attributes instead of raising AttributeError
+                return None
+
+            def get(self, key, default=None):
+                """Get attribute with default value."""
+                return getattr(self, key, default)
+
+        return ConfigNamespace(d)
+
     def __getitem__(self, key):
+        """Allow dictionary-style access."""
         return getattr(self, key)
+
+    def get(self, key, default=None):
+        """Get attribute with default value."""
+        return getattr(self, key, default)
 
 
 class UniRef50Trainer:
@@ -182,7 +221,6 @@ class UniRef50Trainer:
     def __init__(self, config: TrainerConfig):
         self.config = config
         self.setup_environment()
-        self.load_training_config()
         self.setup_model_and_data()
         self.setup_training_components()
         
@@ -225,27 +263,32 @@ class UniRef50Trainer:
         if self.device.type == 'cuda':
             torch.cuda.set_device(self.device)
         
-    def load_training_config(self):
-        """Load and parse training configuration."""
-        config_dict = load_config(self.config.config_file)
-        self.train_config = create_namespace_from_dict(config_dict)
-        
-        if is_main_process():
-            print_config_summary(self.train_config)
-    
     def setup_model_and_data(self):
         """Setup model, data, and related components."""
-        # Setup graph and noise
-        vocab_size = getattr(self.train_config, 'tokens', 33)
-        self.graph = graph_lib.Absorbing(vocab_size - 1)  # vocab_size includes absorbing token
-        if self.config.noise.type == 'loglinear':
-            self.noise = noise_lib.LogLinearNoise()
-        
-        if self.config.noise.type == 'cosine':
-            self.noise = noise_lib.CosineNoise()
+        # Print config summary
+        if is_main_process():
+            print("📋 Configuration Summary:")
+            print(f"  Model: dim={self.config.model.dim}, layers={self.config.model.n_layers}, heads={self.config.model.n_heads}")
+            print(f"  Training: lr={self.config.training.learning_rate}, batch_size={self.config.training.batch_size}")
+            print(f"  Data: max_length={self.config.data.max_length}, tokenize_on_fly={self.config.data.tokenize_on_fly}")
+            print(f"  Noise: type={self.config.noise.type}")
 
-        # Setup model
-        self.model = DiscDiffModel(self.train_config).to(self.device)
+        # Setup graph and noise
+        vocab_size = self.config.tokens
+        self.graph = graph_lib.Absorbing(vocab_size - 1)  # vocab_size includes absorbing token
+
+        # Setup noise based on config
+        noise_type = self.config.noise.type.lower()
+        if noise_type == 'loglinear':
+            self.noise = noise_lib.LogLinearNoise()
+        elif noise_type == 'cosine':
+            self.noise = noise_lib.CosineNoise()
+        else:
+            print(f"⚠️  Unknown noise type: {noise_type}, defaulting to LogLinear")
+            self.noise = noise_lib.LogLinearNoise()
+
+        # Setup model - pass the config directly
+        self.model = DiscDiffModel(self.config).to(self.device)
         
         # Setup DDP if needed
         if self.config.world_size > 1:
@@ -280,10 +323,10 @@ class UniRef50Trainer:
         signal.alarm(300)  # 5 minute timeout for dataset loading
 
         try:
-            # For untokenized data, force streaming and enable tokenization
-            tokenize_on_fly = getattr(self.train_config.data, 'tokenize_on_fly', True)  # Default to True for safety
-            use_streaming = getattr(self.train_config.data, 'use_streaming', True)      # Default to True for large datasets
-            max_length = getattr(self.train_config.data, 'max_length', 256)            # Shorter default for tokenization
+            # Get data settings from config
+            tokenize_on_fly = self.config.data.get('tokenize_on_fly', True)  # Default to True for safety
+            use_streaming = self.config.data.get('use_streaming', True)      # Default to True for large datasets
+            max_length = self.config.data.get('max_length', 256)            # Shorter default for tokenization
 
             # Disable streaming for .pt files (binary format doesn't support streaming)
             if self.config.datafile.endswith('.pt'):
@@ -305,8 +348,8 @@ class UniRef50Trainer:
             print("⚠️  Dataset loading timed out, trying with streaming=True")
             train_dataset = UniRef50Dataset(
                 data_file=self.config.datafile,
-                tokenize_on_fly=getattr(self.train_config.data, 'tokenize_on_fly', False),
-                max_length=getattr(self.train_config.data, 'max_length', 512),
+                tokenize_on_fly=self.config.data.get('tokenize_on_fly', False),
+                max_length=self.config.data.get('max_length', 512),
                 use_streaming=True  # Force streaming on timeout
             )
         
@@ -321,7 +364,7 @@ class UniRef50Trainer:
             )
         
         # Training data loader with fallback for num_workers
-        num_workers = getattr(self.train_config.data, 'num_workers', 4)
+        num_workers = self.config.data.get('num_workers', 4)
 
         # For HPC systems, start with fewer workers to avoid hangs
         if self.config.world_size > 1:
@@ -340,11 +383,11 @@ class UniRef50Trainer:
                 print(f"🔧 Trying DataLoader with {workers} workers...")
                 self.train_loader = DataLoader(
                     train_dataset,
-                    batch_size=getattr(self.train_config.training, 'batch_size', 32),
+                    batch_size=self.config.training.get('batch_size', 32),
                     shuffle=(train_sampler is None),
                     sampler=train_sampler,
                     num_workers=workers,
-                    pin_memory=getattr(self.train_config.data, 'pin_memory', True) and workers > 0,
+                    pin_memory=self.config.data.get('pin_memory', True) and workers > 0,
                     drop_last=True,
                     timeout=30 if workers > 0 else 0,  # Add timeout for worker processes
                     persistent_workers=False  # Disable persistent workers to avoid hangs
@@ -403,33 +446,33 @@ class UniRef50Trainer:
         # Optimizer
         self.optimizer = create_optimizer(
             self.model,
-            learning_rate=getattr(self.train_config.training, 'learning_rate', 1e-4),
-            weight_decay=getattr(self.train_config.training, 'weight_decay', 0.01)
+            learning_rate=self.config.training.get('learning_rate', 1e-4),
+            weight_decay=self.config.training.get('weight_decay', 0.01)
         )
-        
+
         # Scheduler
         self.scheduler = create_scheduler(
             self.optimizer,
-            warmup_steps=getattr(self.train_config.training, 'warmup_steps', 1000),
-            max_steps=getattr(self.train_config.training, 'max_steps', 100000)
+            warmup_steps=self.config.training.get('warmup_steps', 1000),
+            max_steps=self.config.training.get('max_steps', 100000)
         )
-        
+
         # EMA
         self.ema_model = None
-        if getattr(self.train_config.training, 'use_ema', True):
+        if self.config.training.get('use_ema', True):
             self.ema_model = EMAModel(
                 self.model.module if hasattr(self.model, 'module') else self.model,
-                decay=getattr(self.train_config.training, 'ema_decay', 0.9999),
+                decay=self.config.training.get('ema_decay', 0.9999),
                 device=self.device
             )
-        
+
         # Metrics
         self.metrics = TrainingMetrics()
-        
+
         # Training state
         self.current_step = 0
         self.start_time = time.time()
-        self.accumulate_grad_batches = getattr(self.train_config.training, 'accumulate_grad_batches', 1)
+        self.accumulate_grad_batches = self.config.training.get('accumulate_grad_batches', 1)
         self.accumulation_step = 0
 
         print("🚀 Training components initialized")
@@ -455,7 +498,7 @@ class UniRef50Trainer:
         xt = self.graph.sample_transition(x0, sigma)
 
         # Forward pass
-        if getattr(self.train_config.training, 'use_subs_loss', True):
+        if self.config.training.get('use_subs_loss', True):
             # SUBS loss
             model_output = self.model(xt, sigma, use_subs=True)
 
@@ -466,7 +509,7 @@ class UniRef50Trainer:
                 sigma=sigma,
                 noise_schedule=self.noise,
                 step=self.current_step,
-                curriculum_config=getattr(self.train_config, 'curriculum', None)
+                curriculum_config=self.config.curriculum
             )
         else:
             # Original score-based loss (placeholder - implement if needed)
@@ -539,7 +582,7 @@ class UniRef50Trainer:
                 # Gradient clipping and optimization
                     grad_norm = clip_gradients(
                         self.model,
-                        max_norm=getattr(self.train_config.training, 'gradient_clip_norm', 1.0)
+                        max_norm=self.config.training.get('gradient_clip_norm', 1.0)
                     )
 
                 self.optimizer.step()
@@ -673,7 +716,16 @@ class UniRef50Trainer:
                 signal.signal(signal.SIGALRM, wandb_timeout_handler)
                 signal.alarm(60)  # 1 minute timeout for wandb setup
 
-                self.wandb_run = setup_wandb(wandb_project, wandb_name, self.train_config.__dict__)
+                # Convert config to dict for wandb
+                config_dict = {
+                    'model': self.config.model.__dict__ if hasattr(self.config.model, '__dict__') else {},
+                    'training': self.config.training.__dict__ if hasattr(self.config.training, '__dict__') else {},
+                    'data': self.config.data.__dict__ if hasattr(self.config.data, '__dict__') else {},
+                    'noise': self.config.noise.__dict__ if hasattr(self.config.noise, '__dict__') else {},
+                    'tokens': self.config.tokens,
+                    'devicetype': self.config.devicetype
+                }
+                self.wandb_run = setup_wandb(wandb_project, wandb_name, config_dict)
                 signal.alarm(0)  # Cancel timeout
                 print("✅ Wandb setup successful")
 
@@ -686,11 +738,11 @@ class UniRef50Trainer:
             self.wandb_run = None
         
         print(f"\n🚀 Starting training...")
-        print(f"📊 Total steps: {getattr(self.train_config.training, 'max_steps', 100000)}")
-        
+        print(f"📊 Total steps: {self.config.training.get('max_steps', 100000)}")
+
         try:
             # Training loop
-            max_steps = getattr(self.train_config.training, 'max_steps', 100000)
+            max_steps = self.config.training.get('max_steps', 100000)
             epoch_count = 0
             consecutive_failures = 0
             max_consecutive_failures = 3
