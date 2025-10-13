@@ -1,6 +1,28 @@
 """
 Distributed Data Parallel (DDP) utilities for Aurora and Polaris clusters.
 """
+# Fix for AF_UNIX path too long error on HPC systems
+def setup_temp_directory_if_needed():
+    """Setup a shorter temporary directory to avoid AF_UNIX path too long errors."""
+    # Only setup if TMPDIR is not already set to a short path
+    current_tmpdir = os.environ.get('TMPDIR', '/tmp')
+    if len(current_tmpdir) > 80:  # Arbitrary threshold for "too long"
+        short_tmp_dirs = ['/tmp', '/dev/shm', '.']
+
+        for tmp_dir in short_tmp_dirs:
+            if os.path.exists(tmp_dir) and os.access(tmp_dir, os.W_OK):
+                import tempfile
+                try:
+                    temp_dir = tempfile.mkdtemp(prefix='ddp_', dir=tmp_dir)
+                    os.environ['TMPDIR'] = temp_dir
+                    os.environ['TEMP'] = temp_dir
+                    os.environ['TMP'] = temp_dir
+                    print(f"🔧 DDP: Set temporary directory to: {temp_dir}")
+                    return temp_dir
+                except Exception as e:
+                    print(f"⚠️  DDP: Failed to create temp dir in {tmp_dir}: {e}")
+                    continue
+
 # Optional MPI import for Aurora
 #from mpi4py import MPI
 try:
@@ -28,6 +50,9 @@ def setup_ddp_aurora():
     """Setup DDP for Aurora with proper Intel XPU handling."""
     if not MPI_AVAILABLE:
         raise RuntimeError("MPI not available - cannot setup Aurora DDP")
+
+    # Setup temp directory to avoid AF_UNIX path too long errors
+    setup_temp_directory_if_needed()
 
     # DDP: Set environmental variables used by PyTorch
     SIZE = MPI.COMM_WORLD.Get_size()
@@ -68,6 +93,9 @@ def setup_ddp_polaris(rank, world_size):
     """Setup DDP for Polaris cluster."""
     if not MPI_AVAILABLE:
         raise RuntimeError("MPI not available - cannot setup Polaris DDP")
+
+    # Setup temp directory to avoid AF_UNIX path too long errors
+    setup_temp_directory_if_needed()
 
     # DDP: Set environmental variables used by PyTorch
     SIZE = MPI.COMM_WORLD.Get_size()

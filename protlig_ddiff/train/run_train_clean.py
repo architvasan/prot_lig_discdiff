@@ -11,14 +11,61 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
+# Fix for AF_UNIX path too long error on HPC systems
+# Set a shorter temporary directory path before any multiprocessing operations
+def setup_temp_directory():
+    """Setup a shorter temporary directory to avoid AF_UNIX path too long errors."""
+    # Try to use /tmp first, fall back to current directory if needed
+    short_tmp_dirs = ['/tmp', '/dev/shm', '.']
+
+    for tmp_dir in short_tmp_dirs:
+        if os.path.exists(tmp_dir) and os.access(tmp_dir, os.W_OK):
+            # Create a unique subdirectory
+            import tempfile
+            try:
+                temp_dir = tempfile.mkdtemp(prefix='pytorch_', dir=tmp_dir)
+                os.environ['TMPDIR'] = temp_dir
+                os.environ['TEMP'] = temp_dir
+                os.environ['TMP'] = temp_dir
+                print(f"🔧 Set temporary directory to: {temp_dir}")
+                return temp_dir
+            except Exception as e:
+                print(f"⚠️  Failed to create temp dir in {tmp_dir}: {e}")
+                continue
+
+    # If all else fails, use current directory
+    current_tmp = os.path.join(os.getcwd(), 'tmp_pytorch')
+    os.makedirs(current_tmp, exist_ok=True)
+    os.environ['TMPDIR'] = current_tmp
+    os.environ['TEMP'] = current_tmp
+    os.environ['TMP'] = current_tmp
+    print(f"🔧 Set temporary directory to: {current_tmp}")
+    return current_tmp
+
+# Setup temp directory before any other imports that might use multiprocessing
+_temp_dir_created = setup_temp_directory()
+
+def cleanup_temp_directory():
+    """Clean up the temporary directory we created."""
+    global _temp_dir_created
+    if _temp_dir_created and os.path.exists(_temp_dir_created):
+        try:
+            import shutil
+            shutil.rmtree(_temp_dir_created)
+            print(f"🧹 Cleaned up temporary directory: {_temp_dir_created}")
+        except Exception as e:
+            print(f"⚠️  Failed to cleanup temp directory {_temp_dir_created}: {e}")
+
 import torch
 import torch.nn.functional as F
+import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 import wandb
 import numpy as np
 from tqdm import tqdm
+import socket
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -156,6 +203,15 @@ class UniRef50Trainer:
     
     def setup_data_loaders(self):
         """Setup training and validation data loaders."""
+        # Set multiprocessing start method to avoid issues on HPC systems
+        import multiprocessing as mp
+        try:
+            if mp.get_start_method(allow_none=True) != 'spawn':
+                mp.set_start_method('spawn', force=True)
+                print("🔧 Set multiprocessing start method to 'spawn'")
+        except RuntimeError as e:
+            print(f"⚠️  Could not set multiprocessing start method: {e}")
+
         # Training dataset
         train_dataset = UniRef50Dataset(
             data_file=self.config.datafile,
@@ -174,16 +230,30 @@ class UniRef50Trainer:
                 shuffle=True
             )
         
-        # Training data loader
-        self.train_loader = DataLoader(
-            train_dataset,
-            batch_size=getattr(self.train_config.training, 'batch_size', 32),
-            shuffle=(train_sampler is None),
-            sampler=train_sampler,
-            num_workers=getattr(self.train_config.data, 'num_workers', 4),
-            pin_memory=getattr(self.train_config.data, 'pin_memory', True),
-            drop_last=True
-        )
+        # Training data loader with fallback for num_workers
+        num_workers = getattr(self.train_config.data, 'num_workers', 4)
+
+        # Try to create data loader, reduce num_workers if AF_UNIX error occurs
+        for workers in [num_workers, max(1, num_workers // 2), 1, 0]:
+            try:
+                self.train_loader = DataLoader(
+                    train_dataset,
+                    batch_size=getattr(self.train_config.training, 'batch_size', 32),
+                    shuffle=(train_sampler is None),
+                    sampler=train_sampler,
+                    num_workers=workers,
+                    pin_memory=getattr(self.train_config.data, 'pin_memory', True),
+                    drop_last=True
+                )
+                if workers != num_workers:
+                    print(f"🔧 Reduced num_workers to {workers} to avoid multiprocessing issues")
+                break
+            except OSError as e:
+                if "AF_UNIX path too long" in str(e) and workers > 0:
+                    print(f"⚠️  AF_UNIX path too long with {workers} workers, trying {max(1, workers // 2) if workers > 1 else 0}")
+                    continue
+                else:
+                    raise
         
         self.train_sampler = train_sampler
     
@@ -435,9 +505,12 @@ class UniRef50Trainer:
             # Cleanup
             if self.wandb_run is not None:
                 self.wandb_run.finish()
-            
+
             if self.config.world_size > 1:
                 cleanup_ddp()
+
+            # Cleanup temporary directory if we created it
+            cleanup_temp_directory()
 
 
 def parse_args():
