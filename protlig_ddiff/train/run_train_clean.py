@@ -244,11 +244,18 @@ class UniRef50Trainer:
         signal.alarm(300)  # 5 minute timeout for dataset loading
 
         try:
+            # For untokenized data, force streaming and enable tokenization
+            tokenize_on_fly = getattr(self.train_config.data, 'tokenize_on_fly', True)  # Default to True for safety
+            use_streaming = getattr(self.train_config.data, 'use_streaming', True)      # Default to True for large datasets
+            max_length = getattr(self.train_config.data, 'max_length', 256)            # Shorter default for tokenization
+
+            print(f"🔧 Dataset settings: tokenize_on_fly={tokenize_on_fly}, use_streaming={use_streaming}, max_length={max_length}")
+
             train_dataset = UniRef50Dataset(
                 data_file=self.config.datafile,
-                tokenize_on_fly=getattr(self.train_config.data, 'tokenize_on_fly', False),
-                max_length=getattr(self.train_config.data, 'max_length', 512),
-                use_streaming=getattr(self.train_config.data, 'use_streaming', False)
+                tokenize_on_fly=tokenize_on_fly,
+                max_length=max_length,
+                use_streaming=use_streaming
             )
             signal.alarm(0)  # Cancel timeout
             print(f"✅ Dataset loaded successfully: {len(train_dataset)} samples")
@@ -280,6 +287,12 @@ class UniRef50Trainer:
             num_workers = min(num_workers, 2)  # Limit workers in distributed mode
             print(f"🔧 Limited num_workers to {num_workers} for distributed training")
 
+        # For large datasets, start with fewer workers to avoid memory issues
+        dataset_size = len(train_dataset)
+        if dataset_size > 1000000:  # 1M+ sequences
+            num_workers = min(num_workers, 1)  # Start with 1 worker for large datasets
+            print(f"🔧 Large dataset detected ({dataset_size:,} samples), starting with {num_workers} worker(s)")
+
         # Try to create data loader, reduce num_workers if issues occur
         for workers in [num_workers, max(1, num_workers // 2), 1, 0]:
             try:
@@ -297,14 +310,38 @@ class UniRef50Trainer:
                 )
 
                 # Test the data loader by getting one batch
-                print("🧪 Testing DataLoader...")
-                test_iter = iter(self.train_loader)
-                test_batch = next(test_iter)
-                print(f"✅ DataLoader test successful with {workers} workers")
+                if workers == 0:
+                    print("✅ DataLoader created with 0 workers (no test needed)")
+                    break
+                else:
+                    print("🧪 Testing DataLoader...")
+                    import signal
 
-                if workers != num_workers:
-                    print(f"🔧 Reduced num_workers to {workers} to avoid issues")
-                break
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError("DataLoader test timed out")
+
+                    # Set a 30-second timeout for the test
+                    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(30)
+
+                    try:
+                        test_iter = iter(self.train_loader)
+                        test_batch = next(test_iter)
+                        del test_iter, test_batch  # Clean up
+                        signal.alarm(0)  # Cancel timeout
+                        signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                        print(f"✅ DataLoader test successful with {workers} workers")
+
+                        if workers != num_workers:
+                            print(f"🔧 Reduced num_workers to {workers} to avoid issues")
+                        break
+                    except TimeoutError:
+                        signal.alarm(0)  # Cancel timeout
+                        signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                        print(f"⏰ DataLoader test timed out with {workers} workers")
+                        if workers == 0:
+                            raise  # If even 0 workers fails, something is seriously wrong
+                        continue  # Try with fewer workers
 
             except (OSError, RuntimeError, TimeoutError) as e:
                 error_msg = str(e)
@@ -358,13 +395,19 @@ class UniRef50Trainer:
     
     def train_step(self, batch):
         """Execute a single training step with gradient accumulation support."""
+        print(f"🔄 train_step: Starting with batch type {type(batch)}, shape {batch.shape if hasattr(batch, 'shape') else 'no shape'}")
+
         # Move batch to device
+        print(f"🔄 train_step: Moving batch to device {self.device}")
         x0 = batch.to(self.device)
         batch_size = x0.shape[0]
+        print(f"🔄 train_step: Batch moved to device, batch_size={batch_size}")
 
         # Sample time and noise
+        print(f"🔄 train_step: Sampling time and noise")
         t = torch.rand(batch_size, device=self.device)
         sigma = self.noise.sigma(t)
+        print(f"🔄 train_step: Time and noise sampled")
 
         # Corrupt data
         xt = self.graph.sample_transition(x0, sigma)
@@ -425,7 +468,9 @@ class UniRef50Trainer:
         last_log_time = time.time()
 
         try:
-            for batch in pbar:
+            print(f"🔄 Starting batch iteration...")
+            for batch_idx, batch in enumerate(pbar):
+                print(f"🔄 Got batch {batch_idx}, type: {type(batch)}")
                 batch_count += 1
                 current_time = time.time()
 
@@ -437,6 +482,7 @@ class UniRef50Trainer:
 
                 # Training step with timeout protection
                 try:
+                    print(f"🔄 About to call train_step for batch {batch_idx}")
                     loss, accuracy, perplexity = self.train_step(batch)
                 except Exception as e:
                     print(f"❌ Training step failed on rank {self.config.rank}: {e}")
