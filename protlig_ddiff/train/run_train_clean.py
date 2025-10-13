@@ -494,7 +494,7 @@ class UniRef50Trainer:
                 return
 
             # Check if we should sample at this step
-            sample_interval = getattr(sampling_config, 'sample_interval', 5000)
+            sample_interval = getattr(sampling_config, 'sample_interval', 100)
             if step % sample_interval != 0:
                 return
 
@@ -513,10 +513,17 @@ class UniRef50Trainer:
                 device=self.device
             )
 
+            # Print sequences to console
+            if sequences:
+                print(f"🧬 Generated {len(sequences)} sequences:")
+                for i, seq in enumerate(sequences[:3]):  # Show first 3
+                    clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
+                    print(f"  Sample {i+1}: {clean_seq[:80]}{'...' if len(clean_seq) > 80 else ''}")
+
             # Log to wandb if available
             if self.wandb_run is not None and sequences:
                 # Log first few sequences as text
-                sample_text = "\n".join([f"Sample {i+1}: {seq[:100]}..."
+                sample_text = "\n".join([f"Sample {i+1}: {seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()[:100]}..."
                                        for i, seq in enumerate(sequences[:3])])
                 self.wandb_run.log({
                     "samples/sequences": sample_text,
@@ -532,16 +539,12 @@ class UniRef50Trainer:
         print(f"🔄 train_step: Starting with batch type {type(batch)}, shape {batch.shape if hasattr(batch, 'shape') else 'no shape'}")
 
         # Move batch to device
-        print(f"🔄 train_step: Moving batch to device {self.device}")
         x0 = batch.to(self.device)
         batch_size = x0.shape[0]
-        print(f"🔄 train_step: Batch moved to device, batch_size={batch_size}")
 
         # Sample time and noise
-        print(f"🔄 train_step: Sampling time and noise")
         t = torch.rand(batch_size, device=self.device)
         sigma, dsigma = self.noise(t)
-        print(f"🔄 train_step: Time and noise sampled")
 
         # Corrupt data
         xt = self.graph.sample_transition(x0, sigma[:, None])
@@ -562,7 +565,7 @@ class UniRef50Trainer:
                 training_step=self.current_step,
                 #curriculum_config=self.config.curriculum
             )
-            print(f"{loss=}")
+
         else:
             # Original score-based loss (placeholder - implement if needed)
             model_output = self.model(xt, sigma, use_subs=False)
@@ -597,7 +600,6 @@ class UniRef50Trainer:
         if self.config.world_size > 1:
             try:
                 dist.barrier(timeout=60)  # 1 minute timeout
-                print(f"🔄 Rank {self.config.rank}: Ready for training epoch")
             except Exception as e:
                 print(f"⚠️  Barrier timeout on rank {self.config.rank}: {e}")
 
@@ -605,9 +607,7 @@ class UniRef50Trainer:
         last_log_time = time.time()
 
         try:
-            print(f"🔄 Starting batch iteration...")
-            for batch_idx, batch in enumerate(pbar):
-                print(f"🔄 Got batch {batch_idx}, type: {type(batch)}")
+            for batch in pbar:
                 batch_count += 1
                 current_time = time.time()
 
@@ -619,7 +619,6 @@ class UniRef50Trainer:
 
                 # Training step with timeout protection
                 try:
-                    print(f"🔄 About to call train_step for batch {batch_idx}")
                     loss, accuracy, perplexity = self.train_step(batch)
                 except Exception as e:
                     print(f"❌ Training step failed on rank {self.config.rank}: {e}")
@@ -678,20 +677,27 @@ class UniRef50Trainer:
             
             # Update progress bar
             if is_main_process():
-                pbar.set_postfix({
+                # Create a more informative progress bar
+                postfix_dict = {
                     'loss': f"{loss:.4f}",
                     'acc': f"{accuracy:.3f}",
                     'ppl': f"{perplexity:.2f}",
                     'lr': f"{current_lr:.2e}",
-                    'step': self.current_step,
-                    'acc_step': f"{self.accumulation_step}/{self.accumulate_grad_batches}"
-                })
+                    'step': self.current_step
+                }
+
+                # Only show accumulation step if we're accumulating gradients
+                if self.accumulate_grad_batches > 1:
+                    postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
+
+                pbar.set_postfix(postfix_dict)
 
             # Log metrics periodically (only after actual optimization steps)
-            if self.accumulation_step == 0 and self.current_step % 100 == 0 and is_main_process():
+            if self.accumulation_step == 0 and self.current_step % 20 == 0 and is_main_process():
                 self.log_training_metrics()
 
-                # Sample sequences periodically
+            # Sample sequences periodically
+            if self.accumulation_step == 0 and self.current_step % 100 == 0 and is_main_process():
                 self.sample_sequences(self.current_step)
 
                 # Save checkpoint periodically (only after actual optimization steps)
@@ -732,13 +738,14 @@ class UniRef50Trainer:
         if hasattr(self, 'wandb_run') and self.wandb_run is not None:
             log_metrics(metrics, self.current_step, wandb_run=self.wandb_run)
         
-        # Print summary
-        print(f"\n📊 Step {self.current_step} | "
-              f"Loss: {metrics['loss']:.4f} | "
-              f"Acc: {metrics['accuracy']:.3f} | "
-              f"PPL: {metrics['perplexity']:.2f} | "
-              f"LR: {metrics['learning_rate']:.2e} | "
-              f"Time: {format_time(elapsed_time)}")
+        # Print summary only occasionally to reduce noise
+        if self.current_step % 100 == 0:
+            print(f"\n📊 Step {self.current_step} | "
+                  f"Loss: {metrics['loss']:.4f} | "
+                  f"Acc: {metrics['accuracy']:.3f} | "
+                  f"PPL: {metrics['perplexity']:.2f} | "
+                  f"LR: {metrics['learning_rate']:.2e} | "
+                  f"Time: {format_time(elapsed_time)}")
     
     def save_training_checkpoint(self):
         """Save training checkpoint."""

@@ -68,7 +68,7 @@ scheduler:
 
 # Sampling configuration for monitoring during training
 sampling:
-  sample_interval: 5000      # Sample every 5000 steps
+  sample_interval: 100       # Sample every 100 steps
   eval_batch_size: 4         # Number of sequences to sample
   eval_max_length: 128       # Max length for evaluation samples (shorter for speed)
   eval_steps: 256            # Number of sampling steps (fewer for speed)
