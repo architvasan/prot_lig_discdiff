@@ -75,6 +75,22 @@ module load conda
 #export MPICH_GPU_SUPPORT_ENABLED=1
 #export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
 
+# Fix for AF_UNIX path too long error
+export TMPDIR="/tmp/pytorch_\$\$"
+mkdir -p \$TMPDIR
+export TEMP=\$TMPDIR
+export TMP=\$TMPDIR
+echo "Set TMPDIR to: \$TMPDIR"
+
+# Additional multiprocessing settings
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=1
+
+# Hang prevention settings
+export WANDB_SILENT=true
+export WANDB_CONSOLE=off
+export HANG_TIMEOUT=900
+
 # Change to work directory
 cd \$PBS_O_WORKDIR
 
@@ -91,6 +107,12 @@ mpiexec -n \$((${NODES} * ${PPN})) -ppn ${PPN} \\
     --seed 42
 
 echo "Training completed at: \$(date)"
+
+# Cleanup temporary directory
+if [[ -n "\$TMPDIR" && "\$TMPDIR" != "/tmp" && -d "\$TMPDIR" ]]; then
+    echo "Cleaning up temporary directory: \$TMPDIR"
+    rm -rf "\$TMPDIR"
+fi
 EOF
 
     echo "📝 Created PBS script: $pbs_file"
@@ -229,6 +251,22 @@ main() {
         echo "🌐 Setting environment variables..."
         #export MPICH_GPU_SUPPORT_ENABLED=1
         #export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
+
+        # Fix for AF_UNIX path too long error
+        export TMPDIR="/tmp/pytorch_$$"
+        mkdir -p $TMPDIR
+        export TEMP=$TMPDIR
+        export TMP=$TMPDIR
+        echo "Set TMPDIR to: $TMPDIR"
+
+        # Additional multiprocessing settings
+        export PYTHONUNBUFFERED=1
+        export OMP_NUM_THREADS=1
+
+        # Hang prevention settings
+        export WANDB_SILENT=true
+        export WANDB_CONSOLE=off
+        export HANG_TIMEOUT=900
         
         echo "🚀 Starting interactive training..."
         echo "⚠️  Note: For production runs, use --submit to queue the job"

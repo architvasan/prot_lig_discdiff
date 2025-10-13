@@ -212,13 +212,35 @@ class UniRef50Trainer:
         except RuntimeError as e:
             print(f"⚠️  Could not set multiprocessing start method: {e}")
 
-        # Training dataset
-        train_dataset = UniRef50Dataset(
-            data_file=self.config.datafile,
-            tokenize_on_fly=getattr(self.train_config.data, 'tokenize_on_fly', False),
-            max_length=getattr(self.train_config.data, 'max_length', 512),
-            use_streaming=getattr(self.train_config.data, 'use_streaming', False)
-        )
+        # Add timeout for data loading operations
+        import signal
+
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Data loading operation timed out")
+
+        # Training dataset with timeout protection
+        print("📂 Loading training dataset...")
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(300)  # 5 minute timeout for dataset loading
+
+        try:
+            train_dataset = UniRef50Dataset(
+                data_file=self.config.datafile,
+                tokenize_on_fly=getattr(self.train_config.data, 'tokenize_on_fly', False),
+                max_length=getattr(self.train_config.data, 'max_length', 512),
+                use_streaming=getattr(self.train_config.data, 'use_streaming', False)
+            )
+            signal.alarm(0)  # Cancel timeout
+            print(f"✅ Dataset loaded successfully: {len(train_dataset)} samples")
+        except TimeoutError:
+            signal.alarm(0)
+            print("⚠️  Dataset loading timed out, trying with streaming=True")
+            train_dataset = UniRef50Dataset(
+                data_file=self.config.datafile,
+                tokenize_on_fly=getattr(self.train_config.data, 'tokenize_on_fly', False),
+                max_length=getattr(self.train_config.data, 'max_length', 512),
+                use_streaming=True  # Force streaming on timeout
+            )
         
         # Setup sampler for DDP
         train_sampler = None
@@ -233,24 +255,44 @@ class UniRef50Trainer:
         # Training data loader with fallback for num_workers
         num_workers = getattr(self.train_config.data, 'num_workers', 4)
 
-        # Try to create data loader, reduce num_workers if AF_UNIX error occurs
+        # For HPC systems, start with fewer workers to avoid hangs
+        if self.config.world_size > 1:
+            num_workers = min(num_workers, 2)  # Limit workers in distributed mode
+            print(f"🔧 Limited num_workers to {num_workers} for distributed training")
+
+        # Try to create data loader, reduce num_workers if issues occur
         for workers in [num_workers, max(1, num_workers // 2), 1, 0]:
             try:
+                print(f"🔧 Trying DataLoader with {workers} workers...")
                 self.train_loader = DataLoader(
                     train_dataset,
                     batch_size=getattr(self.train_config.training, 'batch_size', 32),
                     shuffle=(train_sampler is None),
                     sampler=train_sampler,
                     num_workers=workers,
-                    pin_memory=getattr(self.train_config.data, 'pin_memory', True),
-                    drop_last=True
+                    pin_memory=getattr(self.train_config.data, 'pin_memory', True) and workers > 0,
+                    drop_last=True,
+                    timeout=30 if workers > 0 else 0,  # Add timeout for worker processes
+                    persistent_workers=False  # Disable persistent workers to avoid hangs
                 )
+
+                # Test the data loader by getting one batch
+                print("🧪 Testing DataLoader...")
+                test_iter = iter(self.train_loader)
+                test_batch = next(test_iter)
+                print(f"✅ DataLoader test successful with {workers} workers")
+
                 if workers != num_workers:
-                    print(f"🔧 Reduced num_workers to {workers} to avoid multiprocessing issues")
+                    print(f"🔧 Reduced num_workers to {workers} to avoid issues")
                 break
-            except OSError as e:
-                if "AF_UNIX path too long" in str(e) and workers > 0:
-                    print(f"⚠️  AF_UNIX path too long with {workers} workers, trying {max(1, workers // 2) if workers > 1 else 0}")
+
+            except (OSError, RuntimeError, TimeoutError) as e:
+                error_msg = str(e)
+                if ("AF_UNIX path too long" in error_msg or
+                    "timeout" in error_msg.lower() or
+                    "deadlock" in error_msg.lower()) and workers > 0:
+                    print(f"⚠️  DataLoader issue with {workers} workers: {error_msg[:100]}...")
+                    print(f"   Trying {max(1, workers // 2) if workers > 1 else 0} workers")
                     continue
                 else:
                     raise
@@ -343,24 +385,49 @@ class UniRef50Trainer:
         """Train for one epoch."""
         self.model.train()
         epoch_metrics = TrainingMetrics()
-        
-        # Setup progress bar
+
+        # Setup progress bar with timeout protection
         if is_main_process():
-            pbar = tqdm(self.train_loader, desc=f"Training")
+            pbar = tqdm(self.train_loader, desc=f"Training",
+                       disable=False, dynamic_ncols=True, leave=False)
         else:
             pbar = self.train_loader
-        
-        for batch in pbar:
-            step_start_time = time.time()
 
-            # Training step
-            loss, accuracy, perplexity = self.train_step(batch)
+        # Add distributed barrier to ensure all processes are ready
+        if self.config.world_size > 1:
+            try:
+                dist.barrier(timeout=60)  # 1 minute timeout
+                print(f"🔄 Rank {self.config.rank}: Ready for training epoch")
+            except Exception as e:
+                print(f"⚠️  Barrier timeout on rank {self.config.rank}: {e}")
 
-            # Increment accumulation step
-            self.accumulation_step += 1
+        batch_count = 0
+        last_log_time = time.time()
 
-            # Only perform optimization step when we've accumulated enough gradients
-            if self.accumulation_step >= self.accumulate_grad_batches:
+        try:
+            for batch in pbar:
+                batch_count += 1
+                current_time = time.time()
+
+                # Log progress every 30 seconds to detect hangs
+                if current_time - last_log_time > 30:
+                    print(f"🔄 Rank {self.config.rank}: Processing batch {batch_count}, step {self.current_step}")
+                    last_log_time = current_time
+                step_start_time = time.time()
+
+                # Training step with timeout protection
+                try:
+                    loss, accuracy, perplexity = self.train_step(batch)
+                except Exception as e:
+                    print(f"❌ Training step failed on rank {self.config.rank}: {e}")
+                    # Skip this batch and continue
+                    continue
+
+                # Increment accumulation step
+                self.accumulation_step += 1
+
+                # Only perform optimization step when we've accumulated enough gradients
+                if self.accumulation_step >= self.accumulate_grad_batches:
                 # Gradient clipping and optimization
                 grad_norm = clip_gradients(
                     self.model,
@@ -421,10 +488,29 @@ class UniRef50Trainer:
             if self.accumulation_step == 0 and self.current_step % 100 == 0 and is_main_process():
                 self.log_training_metrics()
 
-            # Save checkpoint periodically (only after actual optimization steps)
-            if self.accumulation_step == 0 and self.current_step % 5000 == 0 and is_main_process():
-                self.save_training_checkpoint()
-        
+                # Save checkpoint periodically (only after actual optimization steps)
+                if self.accumulation_step == 0 and self.current_step % 5000 == 0 and is_main_process():
+                    try:
+                        self.save_training_checkpoint()
+                    except Exception as e:
+                        print(f"⚠️  Failed to save checkpoint: {e}")
+
+        except Exception as e:
+            print(f"❌ Training epoch failed on rank {self.config.rank}: {e}")
+            print(f"   Processed {batch_count} batches before failure")
+            # Add barrier to ensure all processes are aware of the failure
+            if self.config.world_size > 1:
+                try:
+                    dist.barrier(timeout=30)
+                except:
+                    pass
+            raise
+
+        finally:
+            # Ensure progress bar is closed
+            if is_main_process() and hasattr(pbar, 'close'):
+                pbar.close()
+
         return epoch_metrics.get_averages()
     
     def log_training_metrics(self):
@@ -467,9 +553,27 @@ class UniRef50Trainer:
     
     def train(self, wandb_project=None, wandb_name=None):
         """Main training loop."""
-        # Setup wandb
+        # Setup wandb with timeout protection
         if self.config.use_wandb and is_main_process():
-            self.wandb_run = setup_wandb(wandb_project, wandb_name, self.train_config.__dict__)
+            try:
+                print("🔧 Setting up Wandb...")
+                import signal
+
+                def wandb_timeout_handler(signum, frame):
+                    raise TimeoutError("Wandb setup timed out")
+
+                signal.signal(signal.SIGALRM, wandb_timeout_handler)
+                signal.alarm(60)  # 1 minute timeout for wandb setup
+
+                self.wandb_run = setup_wandb(wandb_project, wandb_name, self.train_config.__dict__)
+                signal.alarm(0)  # Cancel timeout
+                print("✅ Wandb setup successful")
+
+            except (TimeoutError, Exception) as e:
+                signal.alarm(0)
+                print(f"⚠️  Wandb setup failed: {e}")
+                print("   Continuing without wandb logging")
+                self.wandb_run = None
         else:
             self.wandb_run = None
         
@@ -479,22 +583,46 @@ class UniRef50Trainer:
         try:
             # Training loop
             max_steps = getattr(self.train_config.training, 'max_steps', 100000)
-            
+            epoch_count = 0
+            consecutive_failures = 0
+            max_consecutive_failures = 3
+
             while self.current_step < max_steps:
-                # Set epoch for distributed sampler
-                if self.train_sampler is not None:
-                    epoch = self.current_step // len(self.train_loader)
-                    self.train_sampler.set_epoch(epoch)
-                
-                # Train epoch
-                epoch_metrics = self.train_epoch()
-                
-                if is_main_process():
-                    print(f"\n✅ Epoch completed | Avg Loss: {epoch_metrics['loss']:.4f}")
-                
-                # Check if we've reached max steps
-                if self.current_step >= max_steps:
-                    break
+                epoch_count += 1
+                epoch_start_time = time.time()
+
+                try:
+                    # Set epoch for distributed sampler
+                    if self.train_sampler is not None:
+                        epoch = self.current_step // len(self.train_loader)
+                        self.train_sampler.set_epoch(epoch)
+
+                    print(f"\n🚀 Starting epoch {epoch_count}, step {self.current_step}")
+
+                    # Train epoch with timeout detection
+                    epoch_metrics = self.train_epoch()
+
+                    epoch_time = time.time() - epoch_start_time
+                    consecutive_failures = 0  # Reset failure counter on success
+
+                    if is_main_process():
+                        print(f"\n✅ Epoch {epoch_count} completed in {epoch_time:.1f}s | Avg Loss: {epoch_metrics['loss']:.4f}")
+
+                    # Check if we've reached max steps
+                    if self.current_step >= max_steps:
+                        break
+
+                except Exception as e:
+                    consecutive_failures += 1
+                    print(f"❌ Epoch {epoch_count} failed on rank {self.config.rank}: {e}")
+
+                    if consecutive_failures >= max_consecutive_failures:
+                        print(f"💥 Too many consecutive failures ({consecutive_failures}), stopping training")
+                        break
+                    else:
+                        print(f"🔄 Retrying... ({consecutive_failures}/{max_consecutive_failures} failures)")
+                        time.sleep(5)  # Brief pause before retry
+                        continue
             
             # Final checkpoint
             if is_main_process():
@@ -502,15 +630,34 @@ class UniRef50Trainer:
                 print(f"\n🎉 Training completed! Final step: {self.current_step}")
         
         finally:
-            # Cleanup
-            if self.wandb_run is not None:
-                self.wandb_run.finish()
+            # Cleanup with error handling
+            print(f"\n🧹 Cleaning up on rank {self.config.rank}...")
 
+            # Cleanup wandb
+            if self.wandb_run is not None:
+                try:
+                    self.wandb_run.finish()
+                    print("✅ Wandb cleanup completed")
+                except Exception as e:
+                    print(f"⚠️  Wandb cleanup failed: {e}")
+
+            # Cleanup DDP
             if self.config.world_size > 1:
-                cleanup_ddp()
+                try:
+                    # Add barrier before cleanup to ensure all processes are ready
+                    dist.barrier(timeout=30)
+                    cleanup_ddp()
+                    print("✅ DDP cleanup completed")
+                except Exception as e:
+                    print(f"⚠️  DDP cleanup failed: {e}")
 
             # Cleanup temporary directory if we created it
-            cleanup_temp_directory()
+            try:
+                cleanup_temp_directory()
+            except Exception as e:
+                print(f"⚠️  Temp directory cleanup failed: {e}")
+
+            print(f"🏁 Cleanup completed on rank {self.config.rank}")
 
 
 def parse_args():
