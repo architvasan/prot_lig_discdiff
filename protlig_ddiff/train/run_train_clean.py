@@ -500,10 +500,10 @@ class UniRef50Trainer:
                 # Only perform optimization step when we've accumulated enough gradients
                 if self.accumulation_step >= self.accumulate_grad_batches:
                 # Gradient clipping and optimization
-                grad_norm = clip_gradients(
-                    self.model,
-                    max_norm=getattr(self.train_config.training, 'gradient_clip_norm', 1.0)
-                )
+                    grad_norm = clip_gradients(
+                        self.model,
+                        max_norm=getattr(self.train_config.training, 'gradient_clip_norm', 1.0)
+                    )
 
                 self.optimizer.step()
                 self.scheduler.step()
