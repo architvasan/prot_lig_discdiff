@@ -91,6 +91,9 @@ import protlig_dd.processing.graph_lib as graph_lib
 import protlig_dd.processing.noise_lib as noise_lib
 from protlig_ddiff.models.transformer_v100 import DiscDiffModel
 
+# Import sampling
+from protlig_ddiff.sampling.protein_sampling import sample_during_training
+
 #### Setup DDP on Polaris
 ####
 def _setup_ddp_polaris(rank, world_size):
@@ -477,6 +480,52 @@ class UniRef50Trainer:
 
         print("🚀 Training components initialized")
         print(f"📊 Gradient accumulation: {self.accumulate_grad_batches} batches")
+
+    def sample_sequences(self, step):
+        """Sample sequences during training for monitoring."""
+        if not is_main_process():
+            return  # Only sample on main process
+
+        try:
+            # Get sampling config
+            sampling_config = getattr(self.config, 'sampling', None)
+            if sampling_config is None:
+                # Skip sampling if not configured
+                return
+
+            # Check if we should sample at this step
+            sample_interval = getattr(sampling_config, 'sample_interval', 5000)
+            if step % sample_interval != 0:
+                return
+
+            print(f"\n🧬 Sampling sequences at step {step}...")
+
+            # Use EMA model if available, otherwise use main model
+            model_to_use = self.ema_model.ema_model if self.ema_model else self.model
+
+            # Sample sequences
+            sequences = sample_during_training(
+                model=model_to_use,
+                graph=self.graph,
+                noise=self.noise,
+                config=self.config,
+                step=step,
+                device=self.device
+            )
+
+            # Log to wandb if available
+            if self.wandb_run is not None and sequences:
+                # Log first few sequences as text
+                sample_text = "\n".join([f"Sample {i+1}: {seq[:100]}..."
+                                       for i, seq in enumerate(sequences[:3])])
+                self.wandb_run.log({
+                    "samples/sequences": sample_text,
+                    "samples/step": step
+                }, step=step)
+
+        except Exception as e:
+            print(f"⚠️  Sampling failed at step {step}: {e}")
+            # Don't let sampling errors stop training
     
     def train_step(self, batch):
         """Execute a single training step with gradient accumulation support."""
@@ -641,6 +690,9 @@ class UniRef50Trainer:
             # Log metrics periodically (only after actual optimization steps)
             if self.accumulation_step == 0 and self.current_step % 100 == 0 and is_main_process():
                 self.log_training_metrics()
+
+                # Sample sequences periodically
+                self.sample_sequences(self.current_step)
 
                 # Save checkpoint periodically (only after actual optimization steps)
                 if self.accumulation_step == 0 and self.current_step % 5000 == 0 and is_main_process():

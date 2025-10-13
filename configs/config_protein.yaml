@@ -65,3 +65,11 @@ optimizer:
 scheduler:
   type: "cosine"             # Cosine annealing
   min_lr_ratio: 0.1          # Minimum LR = 10% of max LR
+
+# Sampling configuration for monitoring during training
+sampling:
+  sample_interval: 5000      # Sample every 5000 steps
+  eval_batch_size: 4         # Number of sequences to sample
+  eval_max_length: 128       # Max length for evaluation samples (shorter for speed)
+  eval_steps: 256            # Number of sampling steps (fewer for speed)
+  predictor: "analytic"      # Sampling predictor (analytic is fastest)
