@@ -478,8 +478,69 @@ class UniRef50Trainer:
         self.accumulate_grad_batches = self.config.training.get('accumulate_grad_batches', 1)
         self.accumulation_step = 0
 
+        # Sampling failure tracking
+        self.sampling_failure_count = 0
+        self.max_sampling_failures = self.config.training.get('max_sampling_failures', 3)
+        self.stop_on_sampling_failure = self.config.training.get('stop_on_sampling_failure', True)
+
+        # Setup sampling output file
+        self.setup_sampling_output()
+
         print("🚀 Training components initialized")
         print(f"📊 Gradient accumulation: {self.accumulate_grad_batches} batches")
+        print(f"🔍 Sampling failure handling: max_failures={self.max_sampling_failures}, stop_on_failure={self.stop_on_sampling_failure}")
+
+    def setup_sampling_output(self):
+        """Setup file for saving sampled sequences."""
+        # Check if sampling file output is enabled
+        sampling_config = getattr(self.config, 'sampling', None)
+        save_to_file = True  # Default to True
+        if sampling_config:
+            save_to_file = getattr(sampling_config, 'save_to_file', True)
+
+        self.save_sampling_to_file = save_to_file
+
+        if not save_to_file:
+            print("📝 Sampling file output disabled")
+            self.sampling_file = None
+            return
+
+        # Create sampling output directory
+        sampling_dir = Path(self.config.work_dir) / "sampling"
+        sampling_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create sampling output file with timestamp
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.sampling_file = sampling_dir / f"sampled_sequences_{timestamp}.txt"
+
+        # Write header
+        if is_main_process():
+            with open(self.sampling_file, 'w') as f:
+                f.write("# Sampled Protein Sequences During Training\n")
+                f.write("# Format: STEP\tEPOCH\tSEQUENCE_ID\tSEQUENCE\n")
+                f.write("# Generated on: {}\n".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                f.write("\n")
+
+            print(f"📝 Sampling output will be saved to: {self.sampling_file}")
+
+    def save_sequences_to_file(self, sequences, step, epoch):
+        """Save sampled sequences to file with step and epoch information."""
+        if not is_main_process() or not sequences or not self.save_sampling_to_file or not self.sampling_file:
+            return
+
+        try:
+            with open(self.sampling_file, 'a') as f:
+                for i, seq in enumerate(sequences):
+                    # Clean up sequence (remove special tokens)
+                    clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
+                    if clean_seq:  # Only save non-empty sequences
+                        f.write(f"{step}\t{epoch}\t{i+1}\t{clean_seq}\n")
+
+            print(f"📝 Saved {len(sequences)} sequences to {self.sampling_file}")
+
+        except Exception as e:
+            print(f"⚠️  Failed to save sequences to file: {e}")
 
     def sample_sequences(self, step):
         """Sample sequences during training for monitoring."""
@@ -523,6 +584,27 @@ class UniRef50Trainer:
             )
             print(f"🔍 Debug: Got {len(sequences) if sequences else 0} sequences")
 
+            # Check for critical sampling failures
+            if sequences is None:
+                print("❌ CRITICAL: Sampling returned None - this indicates a serious error!")
+                self.sampling_failure_count += 1
+                if self.stop_on_sampling_failure and self.sampling_failure_count >= self.max_sampling_failures:
+                    print(f"💥 STOPPING TRAINING: Too many consecutive sampling failures ({self.sampling_failure_count}/{self.max_sampling_failures})!")
+                    raise RuntimeError(f"Training stopped due to {self.sampling_failure_count} consecutive sampling failures")
+                return
+            elif len(sequences) == 0:
+                print("⚠️  Warning: Sampling returned empty list")
+                self.sampling_failure_count += 1
+                if self.stop_on_sampling_failure and self.sampling_failure_count >= self.max_sampling_failures:
+                    print(f"💥 STOPPING TRAINING: Too many consecutive empty sampling results ({self.sampling_failure_count}/{self.max_sampling_failures})!")
+                    raise RuntimeError(f"Training stopped due to {self.sampling_failure_count} consecutive empty sampling results")
+                return
+            else:
+                # Reset failure counter on successful sampling
+                if self.sampling_failure_count > 0:
+                    print(f"✅ Sampling recovered after {self.sampling_failure_count} failures")
+                self.sampling_failure_count = 0
+
             # Print sequences to console
             if sequences:
                 print(f"🧬 Generated {len(sequences)} sequences:")
@@ -532,6 +614,12 @@ class UniRef50Trainer:
             else:
                 print("🔍 Debug: No sequences generated")
 
+            # Calculate current epoch (approximate)
+            current_epoch = self.current_step // len(self.train_loader) if hasattr(self, 'train_loader') and len(self.train_loader) > 0 else 0
+
+            # Save sequences to file
+            self.save_sequences_to_file(sequences, step, current_epoch)
+
             # Log to wandb if available
             if self.wandb_run is not None and sequences:
                 print(f"🔍 Debug: Logging {len(sequences)} sequences to wandb")
@@ -540,7 +628,8 @@ class UniRef50Trainer:
                                        for i, seq in enumerate(sequences[:3])])
                 self.wandb_run.log({
                     "samples/sequences": sample_text,
-                    "samples/step": step
+                    "samples/step": step,
+                    "samples/epoch": current_epoch
                 }, step=step)
             else:
                 print(f"🔍 Debug: Not logging to wandb - wandb_run: {self.wandb_run is not None}, sequences: {len(sequences) if sequences else 0}")
@@ -549,7 +638,19 @@ class UniRef50Trainer:
             print(f"⚠️  Sampling failed at step {step}: {e}")
             import traceback
             traceback.print_exc()
-            # Don't let sampling errors stop training
+
+            # Track sampling failures and stop training if too many occur
+            self.sampling_failure_count += 1
+            print(f"🔍 Sampling failure count: {self.sampling_failure_count}/{self.max_sampling_failures}")
+
+            # Stop training if we have too many consecutive sampling failures
+            if self.stop_on_sampling_failure and self.sampling_failure_count >= self.max_sampling_failures:
+                print(f"💥 STOPPING TRAINING: Too many consecutive sampling failures ({self.sampling_failure_count}/{self.max_sampling_failures})!")
+                raise RuntimeError(f"Training stopped due to {self.sampling_failure_count} consecutive sampling failures: {e}")
+
+            # For fewer failures, just log and continue
+            print(f"⚠️  Continuing training despite sampling failure ({self.sampling_failure_count}/{self.max_sampling_failures})")
+            return
     
     def train_step(self, batch):
         """Execute a single training step with gradient accumulation support."""
@@ -716,7 +817,15 @@ class UniRef50Trainer:
 
             # Sample sequences periodically
             if self.current_step % 100 == 0:# and is_main_process():
-                self.sample_sequences(self.current_step)
+                try:
+                    self.sample_sequences(self.current_step)
+                except RuntimeError as e:
+                    if "sampling failures" in str(e):
+                        print(f"💥 Training stopped due to sampling failures: {e}")
+                        raise  # Re-raise to stop training
+                    else:
+                        print(f"⚠️  Unexpected error in sampling: {e}")
+                        # Continue training for other types of errors
 
                 # Save checkpoint periodically (only after actual optimization steps)
                 if self.accumulation_step == 0 and self.current_step % 5000 == 0:# and is_main_process():

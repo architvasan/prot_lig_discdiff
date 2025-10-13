@@ -313,21 +313,58 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
             predictor=predictor
         )
 
-        print(f"🔍 Debug: Sampling completed, got {len(sequences)} sequences")
+        print(f"🔍 Debug: Sampling completed, got {len(sequences) if sequences else 0} sequences")
 
-        if sequences:
-            print(f"\n🧬 Sampled sequences at step {step}:")
-            for i, seq in enumerate(sequences):
+        # Validate sequences
+        if sequences is None:
+            print(f"❌ CRITICAL: Sampling returned None at step {step}")
+            return None  # Return None to indicate critical failure
+
+        if len(sequences) == 0:
+            print(f"⚠️  Warning: Sampling returned empty list at step {step}")
+            return []  # Return empty list to indicate no sequences generated
+
+        # Check sequence quality
+        valid_sequences = []
+        for i, seq in enumerate(sequences):
+            if seq is None or len(seq.strip()) == 0:
+                print(f"⚠️  Warning: Empty or None sequence {i+1} at step {step}")
+                continue
+            valid_sequences.append(seq)
+
+        if len(valid_sequences) == 0:
+            print(f"⚠️  Warning: All sequences were invalid at step {step}")
+            return []
+
+        if len(valid_sequences) < len(sequences):
+            print(f"⚠️  Warning: {len(sequences) - len(valid_sequences)} invalid sequences filtered out at step {step}")
+
+        if valid_sequences:
+            print(f"\n🧬 Sampled {len(valid_sequences)} valid sequences at step {step}:")
+            for i, seq in enumerate(valid_sequences[:3]):  # Show first 3
                 # Clean up sequence for display
                 clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
                 print(f"  Sample {i+1}: {clean_seq[:50]}{'...' if len(clean_seq) > 50 else ''}")
-        else:
-            print(f"🔍 Debug: No sequences generated")
 
-        return sequences
+        return valid_sequences
+
+    except torch.cuda.OutOfMemoryError as e:
+        print(f"❌ CUDA OOM during sampling at step {step}: {e}")
+        print("🔧 Try reducing batch_size or max_length in sampling config")
+        return None  # Critical failure
+
+    except RuntimeError as e:
+        if "CUDA" in str(e) or "device" in str(e).lower():
+            print(f"❌ CUDA/Device error during sampling at step {step}: {e}")
+            return None  # Critical failure
+        else:
+            print(f"⚠️  Runtime error during sampling at step {step}: {e}")
+            import traceback
+            traceback.print_exc()
+            return []  # Non-critical failure
 
     except Exception as e:
-        print(f"⚠️  Sampling failed at step {step}: {e}")
+        print(f"⚠️  Unexpected error during sampling at step {step}: {e}")
         import traceback
         traceback.print_exc()
-        return []
+        return []  # Non-critical failure

@@ -26,6 +26,9 @@ training:
   use_ema: true              # Use exponential moving average
   ema_decay: 0.9999          # EMA decay rate
   use_subs_loss: true        # Use SUBS loss (recommended for stability)
+  # Sampling failure handling
+  max_sampling_failures: 3   # Maximum consecutive sampling failures before stopping
+  stop_on_sampling_failure: true  # Whether to stop training on sampling failures
 
 # Data configuration
 data:
@@ -73,3 +76,4 @@ sampling:
   eval_max_length: 128       # Max length for evaluation samples (shorter for speed)
   eval_steps: 256            # Number of sampling steps (fewer for speed)
   predictor: "analytic"      # Sampling predictor (analytic is fastest)
+  save_to_file: true         # Save sampled sequences to file
