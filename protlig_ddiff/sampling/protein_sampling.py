@@ -70,11 +70,11 @@ class ProteinSampler:
             
             # Repeat for batch
             ids_tensor = ids_tensor[None].repeat(batch_size, 1)
-            
-            # Apply conditioning
-            for i, loc in enumerate(input_locs):
-                if loc < x.shape[1]:  # Make sure we don't go out of bounds
-                    x[:, loc] = ids_tensor[:, i]
+            x[:, input_locs] = ids_tensor
+            ## Apply conditioning
+            #for i, loc in enumerate(input_locs):
+            #    if loc < x.shape[1]:  # Make sure we don't go out of bounds
+            #        x[:, loc] = ids_tensor[:, i]
             
             return x
         
@@ -128,7 +128,7 @@ class ProteinSampler:
         
         # Sample sequences
         with torch.no_grad():
-            samples = sampling_fn(self.model)
+            samples = conditioning_fn(sampling_fn(self.model))
         
         return samples
     
