@@ -226,7 +226,7 @@ class UniRef50Dataset(Dataset):
             if self.tokenize_on_fly:
                 # Tokenize on the fly
                 if isinstance(item, dict):
-                    sequence = item.get('sequence', item.get('text', ''))
+                    sequence = item.get('protein_seq', item.get('text', ''))
                 else:
                     sequence = str(item)
                 
