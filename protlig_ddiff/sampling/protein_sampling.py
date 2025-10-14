@@ -161,17 +161,17 @@ class ProteinSampler:
         if prefix:
             # For protein sequences, we might want to tokenize character by character
             # or use the tokenizer's encode method
-            prefix_tokens = [self.tokenizer.token_to_id.get(char, 0) for char in prefix]
-        
+            prefix_tokens = [self.tokenizer.vocab.get(char, 0) for char in prefix]
+
         if suffix:
-            suffix_tokens = [self.tokenizer.token_to_id.get(char, 0) for char in suffix]
-        
+            suffix_tokens = [self.tokenizer.vocab.get(char, 0) for char in suffix]
+
         # Add BOS/EOS if not already present
-        if not prefix_tokens or prefix_tokens[0] != self.tokenizer.token_to_id.get('<s>', 1):
-            prefix_tokens = [self.tokenizer.token_to_id.get('<s>', 1)] + prefix_tokens
-        
-        if not suffix_tokens or suffix_tokens[-1] != self.tokenizer.token_to_id.get('</s>', 2):
-            suffix_tokens = suffix_tokens + [self.tokenizer.token_to_id.get('</s>', 2)]
+        if not prefix_tokens or prefix_tokens[0] != self.tokenizer.vocab.get('<s>', 1):
+            prefix_tokens = [self.tokenizer.vocab.get('<s>', 1)] + prefix_tokens
+
+        if not suffix_tokens or suffix_tokens[-1] != self.tokenizer.vocab.get('</s>', 2):
+            suffix_tokens = suffix_tokens + [self.tokenizer.vocab.get('</s>', 2)]
         
         # Sample sequences
         samples = self.sample_sequences(

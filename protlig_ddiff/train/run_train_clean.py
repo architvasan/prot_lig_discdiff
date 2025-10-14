@@ -87,8 +87,8 @@ from protlig_ddiff.utils.training_utils import (
 from protlig_ddiff.processing.subs_loss import subs_loss, subs_loss_with_curriculum, compute_subs_metrics
 
 # Import model and other components
-import protlig_dd.processing.graph_lib as graph_lib
-import protlig_dd.processing.noise_lib as noise_lib
+import protlig_ddiff.processing.graph_lib as graph_lib
+import protlig_ddiff.processing.noise_lib as noise_lib
 from protlig_ddiff.models.transformer_v100 import DiscDiffModel
 
 # Import sampling
@@ -738,20 +738,16 @@ class UniRef50Trainer:
             for batch in pbar:
                 batch_count += 1
                 current_time = time.time()
-                print(self.current_step)
 
                 # Log progress every 30 seconds to detect hangs
                 if current_time - last_log_time > 30:
-                    #print(f"🔄 Rank {self.config.rank}: Processing batch {batch_count}, step {self.current_step}")
+                    print(f"🔄 Rank {self.config.rank}: Processing batch {batch_count}, step {self.current_step}")
                     last_log_time = current_time
                 step_start_time = time.time()
 
                 # Training step with timeout protection
                 try:
                     loss, accuracy, perplexity = self.train_step(batch)
-
-                    self.current_step+=1
-                    print(f"loss is {loss}")
                 except Exception as e:
                     print(f"❌ Training step failed on rank {self.config.rank}: {e}")
                     # Skip this batch and continue
@@ -762,8 +758,7 @@ class UniRef50Trainer:
 
                 # Only perform optimization step when we've accumulated enough gradients
                 if self.accumulation_step >= self.accumulate_grad_batches:
-                    print(self.accumulation_step)
-                # Gradient clipping and optimization
+                    # Gradient clipping and optimization
                     grad_norm = clip_gradients(
                         self.model,
                         max_norm=self.config.training.get('gradient_clip_norm', 1.0)
@@ -780,61 +775,75 @@ class UniRef50Trainer:
                     # Reset accumulation counter
                     self.accumulation_step = 0
 
-            else:
-                # No optimization step, set grad_norm to 0 for logging
-                grad_norm = 0.0
-            
-            # Update metrics
-            step_time = time.time() - step_start_time
-            current_lr = self.scheduler.get_last_lr()[0]
-            print(current_lr)
-            
-            pbar.set_postfix(loss = f"{loss:.4f}", accuracy=f"{accuracy:.4f}", perplexity=f"{perplexity:.4f}")#{'train_loss':loss, 'accuracy':accuracy, 'perplexity':perplexity, 'current_lr':current_lr, 'step': self.current_step})
-            print("set pbar")
-            self.metrics.update(
-                loss=loss,
-                accuracy=accuracy,
-                perplexity=perplexity,
-                lr=current_lr,
-                grad_norm=grad_norm,
-                step_time=step_time
-            )
-            
-            epoch_metrics.update(
-                loss=loss,
-                accuracy=accuracy,
-                perplexity=perplexity,
-                lr=current_lr,
-                grad_norm=grad_norm,
-                step_time=step_time
-            )
+                    # Increment step counter (only after actual optimization step)
+                    self.current_step += 1
+                else:
+                    # No optimization step, set grad_norm to 0 for logging
+                    grad_norm = 0.0
 
-            #pbar.set_postfix({'train_loss':loss, 'accuracy':accuracy, 'perplexity':perplexity, 'current_lr':current_lr, 'step': self.current_step})## refresh=True)
+                # Update metrics
+                step_time = time.time() - step_start_time
+                current_lr = self.scheduler.get_last_lr()[0]
 
-            # Log metrics periodically (only after actual optimization steps)
-            if self.current_step % 20 == 0:# and is_main_process():
-                self.log_training_metrics()
-                print(loss)
+                self.metrics.update(
+                    loss=loss,
+                    accuracy=accuracy,
+                    perplexity=perplexity,
+                    lr=current_lr,
+                    grad_norm=grad_norm,
+                    step_time=step_time
+                )
 
-            print(self.current_step)
-            # Sample sequences periodically
-            if self.current_step % 10 == 0:# and is_main_process():
-                if True:
-                    self.sample_sequences(self.current_step)
-                if False: #except RuntimeError as e:
-                    if True:#"sampling failures" in str(e):
-                        print(f"💥 Training stopped due to sampling failures: {e}")
-                        raise  # Re-raise to stop training
-                    else:
-                        print(f"⚠️  Unexpected error in sampling: {e}")
-                        # Continue training for other types of errors
+                epoch_metrics.update(
+                    loss=loss,
+                    accuracy=accuracy,
+                    perplexity=perplexity,
+                    lr=current_lr,
+                    grad_norm=grad_norm,
+                    step_time=step_time
+                )
 
-                # Save checkpoint periodically (only after actual optimization steps)
-                if self.accumulation_step == 0 and self.current_step % 5000 == 0:# and is_main_process():
+                # Update progress bar
+                if True:  # is_main_process():
+                    # Create a more informative progress bar
+                    postfix_dict = {
+                        'loss': f"{loss:.4f}",
+                        'acc': f"{accuracy:.3f}",
+                        'ppl': f"{perplexity:.2f}",
+                        'lr': f"{current_lr:.2e}",
+                        'step': self.current_step
+                    }
+
+                    # Only show accumulation step if we're accumulating gradients
+                    if self.accumulate_grad_batches > 1:
+                        postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
+
+                    pbar.set_postfix(postfix_dict)
+
+                # Log metrics periodically (only after actual optimization steps)
+                if self.current_step % 20 == 0:  # and is_main_process():
+                    self.log_training_metrics()
+
+                # Sample sequences periodically
+                sampling_config = getattr(self.config, 'sampling', None)
+                sample_interval = getattr(sampling_config, 'sample_interval', 100) if sampling_config else 100
+                if self.current_step % sample_interval == 0:  # and is_main_process():
                     try:
-                        self.save_training_checkpoint()
-                    except Exception as e:
-                        print(f"⚠️  Failed to save checkpoint: {e}")
+                        self.sample_sequences(self.current_step)
+                    except RuntimeError as e:
+                        if "sampling failures" in str(e):
+                            print(f"💥 Training stopped due to sampling failures: {e}")
+                            raise  # Re-raise to stop training
+                        else:
+                            print(f"⚠️  Unexpected error in sampling: {e}")
+                            # Continue training for other types of errors
+
+                    # Save checkpoint periodically (only after actual optimization steps)
+                    if self.accumulation_step == 0 and self.current_step % 5000 == 0:  # and is_main_process():
+                        try:
+                            self.save_training_checkpoint()
+                        except Exception as e:
+                            print(f"⚠️  Failed to save checkpoint: {e}")
 
         except Exception as e:
             print(f"❌ Training epoch failed on rank {self.config.rank}: {e}")
