@@ -672,7 +672,7 @@ class UniRef50Trainer:
         sigma, dsigma = self.noise(t)
 
         # Corrupt data
-        xt = self.graph.sample_transition(x0, sigma[:, None])
+        xt = self.graph.sample_transition(x0, sigma)#[:, None])
         #print(f"{xt.shape=}")
         #print(f"{x0.shape=}")
 
