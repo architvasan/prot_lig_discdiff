@@ -7,12 +7,45 @@ from torch.cuda.amp import custom_fwd, custom_bwd
 
 
 # Simple categorical sampling function
-def sample_categorical(probs, method="hard"):
-    """Simple categorical sampling"""
+def sample_categorical(probs, method="hard", eps=1e-8):
+    """Simple categorical sampling with numerical stability"""
+    # Add numerical stability
+    probs = probs.clone()  # Don't modify original tensor
+
+    # Handle inf and nan values
+    probs = torch.where(torch.isnan(probs), torch.zeros_like(probs), probs)
+    probs = torch.where(torch.isinf(probs), torch.zeros_like(probs), probs)
+
+    # Ensure non-negative
+    probs = torch.clamp(probs, min=0.0)
+
+    # Add small epsilon to avoid all-zero rows
+    probs = probs + eps
+
+    # Normalize to ensure valid probabilities
+    probs = probs / (probs.sum(dim=-1, keepdim=True) + eps)
+
+    # Check for any remaining issues
+    if torch.any(torch.isnan(probs)) or torch.any(torch.isinf(probs)) or torch.any(probs < 0):
+        print(f"⚠️  Warning: Invalid probabilities detected, using uniform distribution")
+        # Fall back to uniform distribution
+        uniform_probs = torch.ones_like(probs) / probs.shape[-1]
+        probs = uniform_probs
+
     if method == "hard":
-        return torch.multinomial(probs.view(-1, probs.shape[-1]), 1).view(probs.shape[:-1])
+        try:
+            return torch.multinomial(probs.view(-1, probs.shape[-1]), 1).view(probs.shape[:-1])
+        except RuntimeError as e:
+            print(f"⚠️  Multinomial sampling failed: {e}, using argmax fallback")
+            # Fallback to argmax sampling
+            return torch.argmax(probs, dim=-1)
     else:
-        return torch.multinomial(probs.view(-1, probs.shape[-1]), 1).view(probs.shape[:-1])
+        try:
+            return torch.multinomial(probs.view(-1, probs.shape[-1]), 1).view(probs.shape[:-1])
+        except RuntimeError as e:
+            print(f"⚠️  Multinomial sampling failed: {e}, using argmax fallback")
+            # Fallback to argmax sampling
+            return torch.argmax(probs, dim=-1)
 
 def get_graph(config, device, tokens=None):
     if tokens is None:

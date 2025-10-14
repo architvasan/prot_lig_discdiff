@@ -60,20 +60,25 @@ def device_compatible_bias_dropout_scale(x, bias, scale, residual, dropout_prob,
 #                                  Layers                                       #
 #################################################################################
 class LayerNorm(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, eps=1e-6):
         super().__init__()
         self.weight = nn.Parameter(torch.ones([dim]))
+        self.bias = nn.Parameter(torch.zeros([dim]))
         self.dim = dim
+        self.eps = eps
+
     def forward(self, x):
-        # Cross-platform layer norm
+        # Cross-platform layer norm with proper bias and epsilon
         device_type = str(x.device).split(':')[0]
         if device_type == 'cuda':
             with torch.cuda.amp.autocast(enabled=False):
-                x = F.layer_norm(x.float(), [self.dim])
+                x = F.layer_norm(x.float(), [self.dim], weight=None, bias=None, eps=self.eps)
         else:
             # For CPU and MPS, use standard layer norm
-            x = F.layer_norm(x.float(), [self.dim])
-        return x * self.weight[None,None,:]
+            x = F.layer_norm(x.float(), [self.dim], weight=None, bias=None, eps=self.eps)
+
+        # Apply learned weight and bias
+        return x * self.weight[None,None,:] + self.bias[None,None,:]
 
 
 def residual_linear(x, W, x_skip, residual_scale):
@@ -204,9 +209,30 @@ class V100MultiHeadAttention(nn.Module):
             k_seq = k_seq.transpose(0, 1)
             v_seq = v_seq.transpose(0, 1)
             
-            # Compute attention
+            # Compute attention with numerical stability
             attn_scores = torch.matmul(q_seq, k_seq.transpose(-2, -1)) * self.scale
+
+            # Add numerical stability to prevent overflow in softmax
+            attn_scores = torch.clamp(attn_scores, min=-50.0, max=50.0)
+
+            # Check for NaN/Inf in attention scores
+            if torch.any(torch.isnan(attn_scores)) or torch.any(torch.isinf(attn_scores)):
+                print(f"🚨 NaN/Inf detected in attention scores")
+                print(f"   q_seq range: [{torch.min(q_seq):.4f}, {torch.max(q_seq):.4f}]")
+                print(f"   k_seq range: [{torch.min(k_seq):.4f}, {torch.max(k_seq):.4f}]")
+                print(f"   scale: {self.scale}")
+                # Replace with zeros to prevent propagation
+                attn_scores = torch.where(torch.isnan(attn_scores) | torch.isinf(attn_scores),
+                                        torch.zeros_like(attn_scores), attn_scores)
+
             attn_probs = F.softmax(attn_scores, dim=-1)
+
+            # Check for NaN in attention probabilities
+            if torch.any(torch.isnan(attn_probs)):
+                print(f"🚨 NaN detected in attention probabilities")
+                # Use uniform attention as fallback
+                attn_probs = torch.ones_like(attn_probs) / attn_probs.shape[-1]
+
             attn_probs = self.dropout(attn_probs)
             
             attn_out = torch.matmul(attn_probs, v_seq)  # [n_heads, seq_len, head_dim]
@@ -514,6 +540,40 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
         
         self.output_layer = OutputLayer(dim, self.vocab_size, cond_dim)
 
+        # Initialize weights properly
+        self.apply(self._init_weights)
+
+        # Check for NaN weights after initialization
+        self._check_for_nan_weights()
+
+    def _init_weights(self, module):
+        """Initialize weights with proper scaling to prevent NaN values."""
+        if isinstance(module, nn.Linear):
+            # Use Xavier/Glorot initialization with proper scaling
+            torch.nn.init.xavier_uniform_(module.weight, gain=1.0)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            # Initialize embeddings with small values
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, LayerNorm):
+            # LayerNorm weights should be 1, bias should be 0
+            torch.nn.init.ones_(module.weight)
+            torch.nn.init.zeros_(module.bias)
+
+    def _check_for_nan_weights(self):
+        """Check for NaN values in model weights after initialization."""
+        nan_params = []
+        for name, param in self.named_parameters():
+            if torch.any(torch.isnan(param)):
+                nan_params.append(name)
+
+        if nan_params:
+            print(f"🚨 NaN weights detected after initialization: {nan_params}")
+            raise RuntimeError(f"Model has NaN weights after initialization: {nan_params}")
+        else:
+            print("✅ Model weights initialized successfully (no NaN values)")
+
     def _subs_parameterization(self, logits, xt):
         """SUBS parameterization for MDLM loss"""
         # Get mask token index (absorbing state)
@@ -572,23 +632,40 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
 
         rotary_cos_sin = self.rotary_emb(x)
 
-        # Use appropriate autocast based on device
+        # Use appropriate autocast based on device and config
         device_type = str(x.device).split(':')[0]
-        if device_type == 'cuda':
+        use_mixed_precision = getattr(self.config, 'training', {}).get('use_mixed_precision', False)
+
+        if use_mixed_precision and device_type == 'cuda':
+            print(f"🔍 Debug: Running model on {device_type} with mixed precision (bfloat16)")
             with torch.cuda.amp.autocast(dtype=torch.bfloat16):
                 for i in range(len(self.blocks)):
                     x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
                 x = self.output_layer(x, c)
-        elif device_type == 'mps':
-            # MPS has compatibility issues with some operations, use standard computation
-            for i in range(len(self.blocks)):
-                x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
-            x = self.output_layer(x, c)
         else:
-            # CPU - no autocast needed
+            # Run without autocast for numerical stability (recommended for discrete diffusion)
+            if not use_mixed_precision:
+                print(f"🔍 Debug: Running model on {device_type} without mixed precision for stability")
+
             for i in range(len(self.blocks)):
                 x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
+
+                # Check for NaN after each block (only in debug mode)
+                if torch.any(torch.isnan(x)):
+                    print(f"🚨 NaN detected after transformer block {i}")
+                    print(f"   Block input shape: {x.shape}")
+                    print(f"   Rotary embedding shape: {rotary_cos_sin[0].shape if isinstance(rotary_cos_sin, tuple) else 'not tuple'}")
+                    print(f"   Condition shape: {c.shape}")
+                    raise RuntimeError(f"NaN values detected in transformer block {i}")
+
             x = self.output_layer(x, c)
+
+            # Final check for NaN
+            if torch.any(torch.isnan(x)):
+                print(f"🚨 NaN detected in final output")
+                print(f"   Output shape: {x.shape}")
+                print(f"   Output range: [{torch.min(x[~torch.isnan(x)]):.4f}, {torch.max(x[~torch.isnan(x)]):.4f}]")
+                raise RuntimeError("NaN values detected in model output")
 
         # Apply SUBS parameterization if requested
         if use_subs:

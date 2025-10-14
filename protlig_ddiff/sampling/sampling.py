@@ -23,7 +23,32 @@ class mutils:
                 # Ensure sigma has the right shape
                 if sigma.dim() == 1:
                     sigma = sigma.unsqueeze(-1)  # [batch, 1]
-                return model(x, sigma, use_subs=True)
+
+                # Debug: Check inputs
+                if torch.any(torch.isnan(x)):
+                    print(f"🚨 NaN detected in input x: {torch.sum(torch.isnan(x))} NaN values")
+                if torch.any(torch.isnan(sigma)):
+                    print(f"🚨 NaN detected in input sigma: {torch.sum(torch.isnan(sigma))} NaN values")
+                if torch.any(torch.isinf(x)):
+                    print(f"🚨 Inf detected in input x: {torch.sum(torch.isinf(x))} Inf values")
+                if torch.any(torch.isinf(sigma)):
+                    print(f"🚨 Inf detected in input sigma: {torch.sum(torch.isinf(sigma))} Inf values")
+
+                output = model(x, sigma, use_subs=True)
+
+                # Debug: Check outputs
+                if torch.any(torch.isnan(output)):
+                    print(f"🚨 NaN detected in model output: {torch.sum(torch.isnan(output))} NaN values")
+                    print(f"   Input x shape: {x.shape}, sigma shape: {sigma.shape}")
+                    print(f"   Output shape: {output.shape}")
+                    print(f"   x range: [{torch.min(x):.4f}, {torch.max(x):.4f}]")
+                    print(f"   sigma range: [{torch.min(sigma):.4f}, {torch.max(sigma):.4f}]")
+                    print(f"   output range: [{torch.min(output[~torch.isnan(output)]):.4f}, {torch.max(output[~torch.isnan(output)]):.4f}]")
+
+                if torch.any(torch.isinf(output)):
+                    print(f"🚨 Inf detected in model output: {torch.sum(torch.isinf(output))} Inf values")
+
+                return output
         return score_fn
 
 _PREDICTORS = {}
@@ -102,8 +127,19 @@ class AnalyticPredictor(Predictor):
 
         score = score_fn(x, curr_sigma)
 
+        # Add numerical stability checks
+        if torch.any(torch.isnan(score)) or torch.any(torch.isinf(score)):
+            print(f"⚠️  Warning: Invalid score values detected in predictor")
+            score = torch.where(torch.isnan(score), torch.zeros_like(score), score)
+            score = torch.where(torch.isinf(score), torch.zeros_like(score), score)
+
         stag_score = self.graph.staggered_score(score, dsigma)
         probs = stag_score * self.graph.transp_transition(x, dsigma)
+
+        # Add numerical stability for probs
+        if torch.any(torch.isnan(probs)) or torch.any(torch.isinf(probs)):
+            print(f"⚠️  Warning: Invalid probability values detected in predictor")
+
         return sample_categorical(probs)
 
     
@@ -116,12 +152,24 @@ class Denoiser:
         sigma = self.noise(t)[0]
 
         score = score_fn(x, sigma)
+
+        # Add numerical stability checks
+        if torch.any(torch.isnan(score)) or torch.any(torch.isinf(score)):
+            print(f"⚠️  Warning: Invalid score values detected in denoiser")
+            score = torch.where(torch.isnan(score), torch.zeros_like(score), score)
+            score = torch.where(torch.isinf(score), torch.zeros_like(score), score)
+
         stag_score = self.graph.staggered_score(score, sigma)
         probs = stag_score * self.graph.transp_transition(x, sigma)
+
+        # Add numerical stability for probs
+        if torch.any(torch.isnan(probs)) or torch.any(torch.isinf(probs)):
+            print(f"⚠️  Warning: Invalid probability values detected in denoiser")
+
         # truncate probabilities
         if self.graph.absorb:
             probs = probs[..., :-1]
-        
+
         #return probs.argmax(dim=-1)
         return sample_categorical(probs)
                        

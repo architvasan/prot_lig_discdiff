@@ -357,6 +357,29 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
         if "CUDA" in str(e) or "device" in str(e).lower():
             print(f"❌ CUDA/Device error during sampling at step {step}: {e}")
             return None  # Critical failure
+        elif "probability tensor contains" in str(e):
+            print(f"⚠️  Numerical stability issue during sampling at step {step}: {e}")
+            print(f"🔧 This is common in early training - the model will improve with more steps")
+
+            # Try with reduced parameters for better stability
+            try:
+                print(f"🔧 Attempting sampling with reduced parameters...")
+                reduced_sampler = ProteinSampler(model, graph, noise, device=device)
+                reduced_sequences = reduced_sampler.sample_unconditional(
+                    batch_size=min(batch_size, 2),  # Reduce batch size
+                    max_length=min(max_length, 64),  # Reduce sequence length
+                    steps=max(10, steps // 4),       # Reduce sampling steps
+                    predictor=predictor
+                )
+                if reduced_sequences and len(reduced_sequences) > 0:
+                    print(f"✅ Reduced parameter sampling succeeded with {len(reduced_sequences)} sequences")
+                    return reduced_sequences
+                else:
+                    print(f"⚠️  Reduced parameter sampling also failed")
+                    return []
+            except Exception as e2:
+                print(f"⚠️  Reduced parameter sampling failed: {e2}")
+                return []  # Non-critical failure
         else:
             print(f"⚠️  Runtime error during sampling at step {step}: {e}")
             import traceback

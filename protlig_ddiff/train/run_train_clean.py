@@ -561,11 +561,16 @@ class UniRef50Trainer:
 
             # Check if we should sample at this step
             sample_interval = getattr(sampling_config, 'sample_interval', 100)
+            min_steps_before_sampling = getattr(sampling_config, 'min_steps_before_sampling', 500)
             print(f"🔍 Debug: sample_interval: {sample_interval}, step % interval: {step % sample_interval}")
 
+            # Skip sampling if we're too early in training (model not stable yet)
+            if step < min_steps_before_sampling:
+                print(f"🔍 Debug: Skipping sampling - step {step} < min_steps_before_sampling {min_steps_before_sampling}")
+                return
+
             if step % sample_interval != 0:
-                pass
-                #return
+                return
 
             print(f"\n🧬 Sampling sequences at step {step}...")
 
@@ -676,6 +681,29 @@ class UniRef50Trainer:
             # SUBS loss
             model_output = self.model(xt, sigma, use_subs=True)
 
+            # Debug: Check for NaN/Inf in model output during training
+            if torch.any(torch.isnan(model_output)):
+                print(f"🚨 NaN detected in training model output at step {self.current_step}")
+                print(f"   Input xt shape: {xt.shape}, sigma shape: {sigma.shape}")
+                print(f"   xt range: [{torch.min(xt):.4f}, {torch.max(xt):.4f}]")
+                print(f"   sigma range: [{torch.min(sigma):.4f}, {torch.max(sigma):.4f}]")
+                print(f"   NaN count in output: {torch.sum(torch.isnan(model_output))}")
+
+                # Check model parameters for NaN
+                nan_params = []
+                for name, param in self.model.named_parameters():
+                    if torch.any(torch.isnan(param)):
+                        nan_params.append(name)
+                if nan_params:
+                    print(f"🚨 NaN detected in model parameters: {nan_params}")
+
+                # This is a critical error - we should probably stop training
+                raise RuntimeError(f"Model produced NaN outputs at step {self.current_step}")
+
+            if torch.any(torch.isinf(model_output)):
+                print(f"🚨 Inf detected in training model output at step {self.current_step}")
+                print(f"   Inf count in output: {torch.sum(torch.isinf(model_output))}")
+
             # Compute SUBS loss with curriculum learning
             loss, curric_dict = subs_loss_with_curriculum(
                 model_output=model_output,
@@ -685,6 +713,11 @@ class UniRef50Trainer:
                 training_step=self.current_step,
                 #curriculum_config=self.config.curriculum
             )
+
+            # Check loss for NaN/Inf
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"🚨 Invalid loss detected at step {self.current_step}: {loss}")
+                raise RuntimeError(f"Invalid loss at step {self.current_step}")
 
         else:
             # Original score-based loss (placeholder - implement if needed)
@@ -758,6 +791,20 @@ class UniRef50Trainer:
 
                 # Only perform optimization step when we've accumulated enough gradients
                 if self.accumulation_step >= self.accumulate_grad_batches:
+                    # Check for NaN gradients before clipping
+                    nan_grad_params = []
+                    for name, param in self.model.named_parameters():
+                        if param.grad is not None and torch.any(torch.isnan(param.grad)):
+                            nan_grad_params.append(name)
+
+                    if nan_grad_params:
+                        print(f"🚨 NaN gradients detected at step {self.current_step}: {nan_grad_params}")
+                        # Zero out NaN gradients to prevent propagation
+                        for name, param in self.model.named_parameters():
+                            if param.grad is not None and torch.any(torch.isnan(param.grad)):
+                                print(f"   Zeroing NaN gradients in {name}")
+                                param.grad.data[torch.isnan(param.grad.data)] = 0.0
+
                     # Gradient clipping and optimization
                     grad_norm = clip_gradients(
                         self.model,

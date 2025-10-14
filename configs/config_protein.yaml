@@ -17,15 +17,16 @@ model:
 # Training configuration - optimized for stability
 training:
   batch_size: 16             # Mini-batch size (adjust based on memory)
-  learning_rate: 2.0e-4        # Learning rate (slightly higher for SUBS)
+  learning_rate: 1.0e-4        # Learning rate (reduced for numerical stability)
   weight_decay: 0.01         # Weight decay for regularization
   warmup_steps: 2000         # Warmup steps (longer for stability)
   max_steps: 50000           # Total training steps
-  gradient_clip_norm: 1.0    # Gradient clipping
+  gradient_clip_norm: 0.5    # Gradient clipping (reduced for stability)
   accumulate_grad_batches: 8 # Effective batch = 16 * 8 = 128
   use_ema: true              # Use exponential moving average
   ema_decay: 0.9999          # EMA decay rate
   use_subs_loss: true        # Use SUBS loss (recommended for stability)
+  use_mixed_precision: false # DISABLED: Mixed precision can cause NaN values in discrete diffusion
   # Sampling failure handling
   max_sampling_failures: 1   # Maximum consecutive sampling failures before stopping
   stop_on_sampling_failure: true  # Whether to stop training on sampling failures
@@ -72,6 +73,7 @@ scheduler:
 # Sampling configuration for monitoring during training
 sampling:
   sample_interval: 100       # Sample every 100 steps
+  min_steps_before_sampling: 500  # Wait this many steps before starting sampling (model stability)
   eval_batch_size: 4         # Number of sequences to sample
   eval_max_length: 512       # Max length for evaluation samples (shorter for speed)
   eval_steps: 256            # Number of sampling steps (fewer for speed)
