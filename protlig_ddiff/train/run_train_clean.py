@@ -370,15 +370,33 @@ class UniRef50Trainer:
             print(f"🔍 DDP Debug - Rank {self.config.rank}/{self.config.world_size}: Setting up DistributedSampler")
             print(f"   Dataset size: {len(train_dataset)}")
 
+            # Use rank-specific seed to ensure different sampling per rank
+            sampler_seed = self.config.seed + self.config.rank * 1000
+            print(f"   Using sampler seed: {sampler_seed} (base: {self.config.seed}, rank: {self.config.rank})")
+
             train_sampler = DistributedSampler(
                 train_dataset,
                 num_replicas=self.config.world_size,
                 rank=self.config.rank,
                 shuffle=True,
-                seed=self.config.seed  # Important: ensure different seeds per epoch
+                seed=sampler_seed  # Rank-specific seed
             )
 
             print(f"   Sampler created - rank {self.config.rank} will see {len(train_sampler)} samples")
+
+            # Test the sampler by getting first few indices
+            sampler_indices = list(train_sampler)[:5]
+            print(f"   First 5 sampler indices for rank {self.config.rank}: {sampler_indices}")
+
+            # CRITICAL TEST: Check if dataset returns different items for different indices
+            print(f"🔍 Dataset test for rank {self.config.rank}:")
+            for i, idx in enumerate(sampler_indices[:3]):
+                item = train_dataset[idx]
+                item_hash = hash(tuple(item[:20].numpy())) if hasattr(item, 'numpy') else hash(tuple(item[:20]))
+                print(f"   Index {idx} → hash: {item_hash}, first 10: {item[:10]}")
+                if i > 0 and item_hash == prev_hash:
+                    print(f"🚨 DATASET BUG: Index {idx} returns same data as previous index!")
+                prev_hash = item_hash
         else:
             print(f"🔍 Single process training - no DistributedSampler needed")
         
