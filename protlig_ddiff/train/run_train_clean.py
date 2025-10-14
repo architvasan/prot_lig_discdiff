@@ -359,12 +359,20 @@ class UniRef50Trainer:
         # Setup sampler for DDP
         train_sampler = None
         if self.config.world_size > 1:
+            print(f"🔍 DDP Debug - Rank {self.config.rank}/{self.config.world_size}: Setting up DistributedSampler")
+            print(f"   Dataset size: {len(train_dataset)}")
+
             train_sampler = DistributedSampler(
                 train_dataset,
                 num_replicas=self.config.world_size,
                 rank=self.config.rank,
-                shuffle=True
+                shuffle=True,
+                seed=self.config.seed  # Important: ensure different seeds per epoch
             )
+
+            print(f"   Sampler created - rank {self.config.rank} will see {len(train_sampler)} samples")
+        else:
+            print(f"🔍 Single process training - no DistributedSampler needed")
         
         # Training data loader with fallback for num_workers
         num_workers = self.config.data.get('num_workers', 4)
@@ -681,16 +689,30 @@ class UniRef50Trainer:
         print(f"🔍 xt shape after transition: {xt.shape}")
 
         # Debug: Compare x0 vs xt to verify corruption is working
-        print(f"🔍 x0 first sequence: {x0[0, :10]}")
-        print(f"🔍 xt first sequence: {xt[0, :10]}")
-        print(f"🔍 Corruption check - same?: {torch.equal(x0[0], xt[0])}")
-        print(f"🔍 Sigma for first sequence: {sigma[0]:.4f}")
+        print(f"🔍 Rank {self.config.rank}: x0 first sequence: {x0[0, :10]}")
+        print(f"🔍 Rank {self.config.rank}: xt first sequence: {xt[0, :10]}")
+        print(f"🔍 Rank {self.config.rank}: Corruption check - same?: {torch.equal(x0[0], xt[0])}")
+        print(f"🔍 Rank {self.config.rank}: Sigma for first sequence: {sigma[0]:.4f}")
 
         # Count how many tokens changed
         changed_tokens = (x0[0] != xt[0]).sum().item()
         total_tokens = x0[0].numel()
         corruption_rate = changed_tokens / total_tokens
-        print(f"🔍 Corruption rate: {changed_tokens}/{total_tokens} = {corruption_rate:.3f}")
+        print(f"🔍 Rank {self.config.rank}: Corruption rate: {changed_tokens}/{total_tokens} = {corruption_rate:.3f}")
+
+        # Debug: Check if all ranks are seeing the same data (DDP issue)
+        if self.config.world_size > 1:
+            # Create a simple hash of the first sequence to compare across ranks
+            x0_hash = hash(tuple(x0[0, :20].cpu().numpy()))
+            print(f"🔍 Rank {self.config.rank}: x0 hash (first 20 tokens): {x0_hash}")
+
+            # Also check batch diversity within this rank
+            if x0.shape[0] > 1:
+                x0_hash_2 = hash(tuple(x0[1, :20].cpu().numpy()))
+                same_within_batch = (x0_hash == x0_hash_2)
+                print(f"🔍 Rank {self.config.rank}: Same sequences within batch?: {same_within_batch}")
+                if same_within_batch:
+                    print(f"🚨 Rank {self.config.rank}: WARNING - All sequences in batch are identical!")
         #print(f"{xt.shape=}")
         #print(f"{x0.shape=}")
 
@@ -1053,9 +1075,11 @@ class UniRef50Trainer:
                     # Set epoch for distributed sampler
                     if self.train_sampler is not None:
                         epoch = self.current_step // len(self.train_loader)
+                        print(f"🔍 Rank {self.config.rank}: Setting sampler epoch to {epoch}")
                         self.train_sampler.set_epoch(epoch)
+                        print(f"🔍 Rank {self.config.rank}: Sampler epoch set, will see {len(self.train_sampler)} samples")
 
-                    print(f"\n🚀 Starting epoch {epoch_count}, step {self.current_step}")
+                    print(f"\n🚀 Rank {self.config.rank}: Starting epoch {epoch_count}, step {self.current_step}")
 
                     # Train epoch with timeout detection
                     epoch_metrics = self.train_epoch()
