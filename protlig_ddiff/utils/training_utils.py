@@ -247,7 +247,7 @@ def setup_wandb(project_name, run_name, config, resume_id=None):
         return None
 
 
-def log_metrics(metrics, step, wandb_run=None, log_file=None):
+def log_metrics(metrics, step, wandb_run='protlig_dd', log_file=None):
     """Log metrics to wandb and/or file."""
     # Log to wandb
     if wandb_run is not None:

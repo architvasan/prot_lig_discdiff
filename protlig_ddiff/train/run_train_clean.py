@@ -527,7 +527,7 @@ class UniRef50Trainer:
     def save_sequences_to_file(self, sequences, step, epoch):
         """Save sampled sequences to file with step and epoch information."""
         if not is_main_process() or not sequences or not self.save_sampling_to_file or not self.sampling_file:
-            return
+            pass
 
         try:
             with open(self.sampling_file, 'a') as f:
@@ -564,7 +564,8 @@ class UniRef50Trainer:
             print(f"🔍 Debug: sample_interval: {sample_interval}, step % interval: {step % sample_interval}")
 
             if step % sample_interval != 0:
-                return
+                pass
+                #return
 
             print(f"\n🧬 Sampling sequences at step {step}...")
 
@@ -582,6 +583,7 @@ class UniRef50Trainer:
                 step=step,
                 device=self.device
             )
+            print(sequences)
             print(f"🔍 Debug: Got {len(sequences) if sequences else 0} sequences")
 
             # Check for critical sampling failures
@@ -654,7 +656,7 @@ class UniRef50Trainer:
     
     def train_step(self, batch):
         """Execute a single training step with gradient accumulation support."""
-        print(f"🔄 train_step: Starting with batch type {type(batch)}, shape {batch.shape if hasattr(batch, 'shape') else 'no shape'}")
+        #print(f"🔄 train_step: Starting with batch type {type(batch)}, shape {batch.shape if hasattr(batch, 'shape') else 'no shape'}")
 
         # Move batch to device
         x0 = batch.to(self.device)
@@ -706,13 +708,21 @@ class UniRef50Trainer:
         """Train for one epoch."""
         self.model.train()
         epoch_metrics = TrainingMetrics()
-
+        loss = 100.0
+        accuracy = 0.0
+        perplexity = 100.0
+        current_lr = 1.0e-5
         # Setup progress bar with timeout protection
         if True:
-            pbar = tqdm(self.train_loader, desc=f"Training",
-                       disable=False, dynamic_ncols=True, leave=False)
-        else:
-            pbar = self.train_loader
+            pbar = tqdm(self.train_loader, desc=f"Training")#, postfix= {
+                    #'loss': f"{loss:.4f}",
+                    #'acc': f"{accuracy:.3f}",
+                    #'ppl': f"{perplexity:.2f}",
+                    #'lr': f"{current_lr:.2e}",
+                    #'step': self.current_step
+                #})
+        #else:
+        #    pbar = self.train_loader
 
         # Add distributed barrier to ensure all processes are ready
         if self.config.world_size > 1:
@@ -728,17 +738,20 @@ class UniRef50Trainer:
             for batch in pbar:
                 batch_count += 1
                 current_time = time.time()
+                print(self.current_step)
 
                 # Log progress every 30 seconds to detect hangs
                 if current_time - last_log_time > 30:
-                    print(f"🔄 Rank {self.config.rank}: Processing batch {batch_count}, step {self.current_step}")
+                    #print(f"🔄 Rank {self.config.rank}: Processing batch {batch_count}, step {self.current_step}")
                     last_log_time = current_time
                 step_start_time = time.time()
 
                 # Training step with timeout protection
                 try:
                     loss, accuracy, perplexity = self.train_step(batch)
-                    print(loss, accuracy, perplexity)
+
+                    self.current_step+=1
+                    print(f"loss is {loss}")
                 except Exception as e:
                     print(f"❌ Training step failed on rank {self.config.rank}: {e}")
                     # Skip this batch and continue
@@ -749,6 +762,7 @@ class UniRef50Trainer:
 
                 # Only perform optimization step when we've accumulated enough gradients
                 if self.accumulation_step >= self.accumulate_grad_batches:
+                    print(self.accumulation_step)
                 # Gradient clipping and optimization
                     grad_norm = clip_gradients(
                         self.model,
@@ -766,8 +780,6 @@ class UniRef50Trainer:
                     # Reset accumulation counter
                     self.accumulation_step = 0
 
-                    # Increment step counter (only after actual optimization step)
-                    self.current_step += 1
             else:
                 # No optimization step, set grad_norm to 0 for logging
                 grad_norm = 0.0
@@ -775,7 +787,10 @@ class UniRef50Trainer:
             # Update metrics
             step_time = time.time() - step_start_time
             current_lr = self.scheduler.get_last_lr()[0]
+            print(current_lr)
             
+            pbar.set_postfix(loss = f"{loss:.4f}", accuracy=f"{accuracy:.4f}", perplexity=f"{perplexity:.4f}")#{'train_loss':loss, 'accuracy':accuracy, 'perplexity':perplexity, 'current_lr':current_lr, 'step': self.current_step})
+            print("set pbar")
             self.metrics.update(
                 loss=loss,
                 accuracy=accuracy,
@@ -793,34 +808,21 @@ class UniRef50Trainer:
                 grad_norm=grad_norm,
                 step_time=step_time
             )
-            
-            # Update progress bar
-            if True:#is_main_process():
-                # Create a more informative progress bar
-                postfix_dict = {
-                    'loss': f"{loss:.4f}",
-                    'acc': f"{accuracy:.3f}",
-                    'ppl': f"{perplexity:.2f}",
-                    'lr': f"{current_lr:.2e}",
-                    'step': self.current_step
-                }
 
-                # Only show accumulation step if we're accumulating gradients
-                if self.accumulate_grad_batches > 1:
-                    postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
-
-                pbar.set_postfix(postfix_dict)
+            #pbar.set_postfix({'train_loss':loss, 'accuracy':accuracy, 'perplexity':perplexity, 'current_lr':current_lr, 'step': self.current_step})## refresh=True)
 
             # Log metrics periodically (only after actual optimization steps)
             if self.current_step % 20 == 0:# and is_main_process():
                 self.log_training_metrics()
+                print(loss)
 
+            print(self.current_step)
             # Sample sequences periodically
-            if self.current_step % 100 == 0:# and is_main_process():
-                try:
+            if self.current_step % 10 == 0:# and is_main_process():
+                if True:
                     self.sample_sequences(self.current_step)
-                except RuntimeError as e:
-                    if "sampling failures" in str(e):
+                if False: #except RuntimeError as e:
+                    if True:#"sampling failures" in str(e):
                         print(f"💥 Training stopped due to sampling failures: {e}")
                         raise  # Re-raise to stop training
                     else:
