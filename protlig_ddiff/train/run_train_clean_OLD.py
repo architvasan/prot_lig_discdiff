@@ -734,8 +734,31 @@ class UniRef50Trainer:
         with torch.no_grad():
             accuracy = compute_accuracy(model_output, x0)
             perplexity = compute_perplexity(loss)
+            # Get average sigma for this batch for monitoring
+            avg_sigma = sigma.mean().item()
 
-        return loss.item(), accuracy, perplexity
+            # Debug high accuracy - print details every 100 steps
+            if self.current_step % 100 == 0 and accuracy > 0.9:
+                print(f"\n🔍 High accuracy debug at step {self.current_step}:")
+                print(f"   Accuracy: {accuracy:.4f}")
+                print(f"   Avg sigma: {avg_sigma:.4f}")
+                print(f"   Sigma range: [{sigma.min().item():.4f}, {sigma.max().item():.4f}]")
+                print(f"   Model output shape: {model_output.shape}")
+                print(f"   Target shape: {x0.shape}")
+
+                # Check if model is just predicting the same token everywhere
+                pred_tokens = torch.argmax(model_output, dim=-1)
+                unique_preds = torch.unique(pred_tokens).numel()
+                unique_targets = torch.unique(x0).numel()
+                print(f"   Unique predicted tokens: {unique_preds}")
+                print(f"   Unique target tokens: {unique_targets}")
+
+                # Check if predictions are too confident
+                max_probs = torch.softmax(model_output, dim=-1).max(dim=-1)[0]
+                avg_confidence = max_probs.mean().item()
+                print(f"   Average prediction confidence: {avg_confidence:.4f}")
+
+        return loss.item(), accuracy, perplexity, avg_sigma
     
     def train_epoch(self):
         """Train for one epoch."""
@@ -780,7 +803,7 @@ class UniRef50Trainer:
 
                 # Training step with timeout protection
                 try:
-                    loss, accuracy, perplexity = self.train_step(batch)
+                    loss, accuracy, perplexity, avg_sigma = self.train_step(batch)
                 except Exception as e:
                     print(f"❌ Training step failed on rank {self.config.rank}: {e}")
                     # Skip this batch and continue
@@ -837,6 +860,7 @@ class UniRef50Trainer:
                     loss=loss,
                     accuracy=accuracy,
                     perplexity=perplexity,
+                    avg_sigma=avg_sigma,
                     lr=current_lr,
                     grad_norm=grad_norm,
                     step_time=step_time
@@ -846,6 +870,7 @@ class UniRef50Trainer:
                     loss=loss,
                     accuracy=accuracy,
                     perplexity=perplexity,
+                    avg_sigma=avg_sigma,
                     lr=current_lr,
                     grad_norm=grad_norm,
                     step_time=step_time
@@ -858,6 +883,7 @@ class UniRef50Trainer:
                         'loss': f"{loss:.4f}",
                         'acc': f"{accuracy:.3f}",
                         'ppl': f"{perplexity:.2f}",
+                        'σ': f"{avg_sigma:.3f}",  # Add sigma to progress bar
                         'lr': f"{current_lr:.2e}",
                         'step': self.current_step
                     }
@@ -936,6 +962,7 @@ class UniRef50Trainer:
                   f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
                   f"Acc: {metrics.get('accuracy', 0):.3f} | "
                   f"PPL: {metrics.get('perplexity', 0):.2f} | "
+                  f"σ: {metrics.get('avg_sigma', 0):.3f} | "
                   f"LR: {metrics.get('learning_rate', 0):.2e} | "
                   f"Time: {format_time(elapsed_time)}")
     

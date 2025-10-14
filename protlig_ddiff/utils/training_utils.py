@@ -113,17 +113,20 @@ class TrainingMetrics:
         self.losses = []
         self.accuracies = []
         self.perplexities = []
+        self.avg_sigmas = []
         self.learning_rates = []
         self.gradient_norms = []
         self.step_times = []
-    
-    def update(self, loss, accuracy=None, perplexity=None, lr=None, grad_norm=None, step_time=None):
+
+    def update(self, loss, accuracy=None, perplexity=None, avg_sigma=None, lr=None, grad_norm=None, step_time=None):
         """Update metrics with new values."""
         self.losses.append(loss)
         if accuracy is not None:
             self.accuracies.append(accuracy)
         if perplexity is not None:
             self.perplexities.append(perplexity)
+        if avg_sigma is not None:
+            self.avg_sigmas.append(avg_sigma)
         if lr is not None:
             self.learning_rates.append(lr)
         if grad_norm is not None:
@@ -141,6 +144,8 @@ class TrainingMetrics:
             metrics['accuracy'] = np.mean(self.accuracies[-window:])
         if self.perplexities:
             metrics['perplexity'] = np.mean(self.perplexities[-window:])
+        if self.avg_sigmas:
+            metrics['avg_sigma'] = np.mean(self.avg_sigmas[-window:])
         if self.learning_rates:
             metrics['learning_rate'] = self.learning_rates[-1]  # Current LR
         if self.gradient_norms:
