@@ -125,11 +125,19 @@ def _setup_ddp_polaris(rank, world_size):
     # Initialize distributed communication
     torch.distributed.init_process_group(backend='nccl', init_method='env://')
 
-    # Set CUDA device
-    device_id = rank % torch.cuda.device_count()
+    # Set CUDA device - CRITICAL FIX: use RANK not rank parameter
+    device_id = RANK % torch.cuda.device_count()
     torch.cuda.set_device(device_id)
-    
-    return dist.get_rank(), device_id, dist.get_world_size()
+
+    # Verify DDP setup
+    actual_rank = dist.get_rank()
+    actual_world_size = dist.get_world_size()
+    print(f"🔍 DDP Verification - MPI rank: {RANK}, PyTorch rank: {actual_rank}, device: {device_id}")
+
+    if RANK != actual_rank:
+        print(f"🚨 WARNING: MPI rank ({RANK}) != PyTorch rank ({actual_rank})")
+
+    return actual_rank, device_id, actual_world_size
 
 ### Main Training config
 
@@ -392,16 +400,21 @@ class UniRef50Trainer:
         for workers in [num_workers, max(1, num_workers // 2), 1, 0]:
             try:
                 print(f"🔧 Trying DataLoader with {workers} workers...")
+                # Debug: Print DataLoader configuration
+                shuffle_setting = (train_sampler is None)
+                print(f"🔍 DataLoader config - shuffle: {shuffle_setting}, sampler: {train_sampler is not None}")
+
                 self.train_loader = DataLoader(
                     train_dataset,
                     batch_size=self.config.training.get('batch_size', 32),
-                    shuffle=(train_sampler is None),
+                    shuffle=shuffle_setting,  # Only shuffle if no sampler
                     sampler=train_sampler,
                     num_workers=workers,
                     pin_memory=self.config.data.get('pin_memory', True) and workers > 0,
                     drop_last=True,
                     timeout=30 if workers > 0 else 0,  # Add timeout for worker processes
-                    persistent_workers=False  # Disable persistent workers to avoid hangs
+                    persistent_workers=False,  # Disable persistent workers to avoid hangs
+                    generator=torch.Generator().manual_seed(self.config.seed + self.config.rank)  # Rank-specific seed
                 )
 
                 # Test the data loader by getting one batch
