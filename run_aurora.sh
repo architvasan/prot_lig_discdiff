@@ -10,9 +10,9 @@ set -e
 # =============================================================================
 
 # Default Aurora settings
-CONFIG_FILE="config_protein.yaml"
-DATA_FILE="/lus/eagle/projects/your_project/data/protein_data.jsonl"  # CHANGE THIS
-WORK_DIR="/lus/eagle/projects/your_project/experiments/sedd_$(date +%Y%m%d_%H%M%S)"  # CHANGE PROJECT PATH
+CONFIG_FILE="/lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/prot_lig_discdiff/config_protein.yaml"
+DATA_FILE="/lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/input_data/processed_uniref50.pt" # CHANGE THIS
+WORK_DIR="/lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/prot_lig_discdiff/experiments/sedd_$(date +%Y%m%d_%H%M%S)"  # CHANGE PROJECT PATH
 
 # Aurora-specific defaults
 DEVICE="xpu:0"
@@ -79,7 +79,7 @@ cd \$PBS_O_WORKDIR
 
 # Run training with MPI
 mpiexec -n \$((${NODES} * ${PPN})) -ppn ${PPN} \\
-    python run_train_clean.py \\
+    python /lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/prot_lig_discdiff/protlig_ddiff/train/run_train_clean.py \\
     --config ${CONFIG_FILE} \\
     --datafile ${DATA_FILE} \\
     --work_dir ${WORK_DIR} \\
@@ -102,7 +102,7 @@ EOF
 WANDB_NAME="aurora-disc-diff-$(date +%Y%m%d_%H%M%S)"
 TIME_LIMIT=2
 QUEUE="workq"
-ACCOUNT=""
+ACCOUNT="FoundEpidem"
 SUBMIT=false
 
 while [[ $# -gt 0 ]]; do
@@ -231,7 +231,7 @@ main() {
         
         # Run with MPI
         mpiexec -n $((NODES * PPN)) -ppn $PPN \
-            python run_train_clean.py \
+            python /lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/prot_lig_discdiff/protlig_ddiff/train/run_train_clean.py \
             --config "$CONFIG_FILE" \
             --datafile "$DATA_FILE" \
             --work_dir "$WORK_DIR" \

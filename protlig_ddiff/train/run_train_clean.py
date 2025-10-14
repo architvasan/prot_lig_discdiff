@@ -37,8 +37,8 @@ from protlig_ddiff.utils.training_utils import (
 from protlig_ddiff.processing.subs_loss import subs_loss, subs_loss_with_curriculum, compute_subs_metrics
 
 # Import model and other components
-import protlig_dd.processing.graph_lib as graph_lib
-import protlig_dd.processing.noise_lib as noise_lib
+import protlig_ddiff.processing.graph_lib as graph_lib
+import protlig_ddiff.processing.noise_lib as noise_lib
 from protlig_ddiff.models.transformer_v100 import DiscDiffModel
 
 
@@ -148,8 +148,8 @@ class UniRef50Trainer:
         # Optimizer
         self.optimizer = create_optimizer(
             self.model,
-            learning_rate=getattr(self.train_config.training, 'learning_rate', 1e-4),
-            weight_decay=getattr(self.train_config.training, 'weight_decay', 0.01)
+            learning_rate=float(getattr(self.train_config.training, 'learning_rate', 1e-4)),
+            weight_decay=float(getattr(self.train_config.training, 'weight_decay', 0.01))
         )
         
         # Scheduler
@@ -199,13 +199,13 @@ class UniRef50Trainer:
             model_output = self.model(xt, sigma, use_subs=True)
 
             # Compute SUBS loss with curriculum learning
-            loss = subs_loss_with_curriculum(
+            loss, curriculum_info = subs_loss_with_curriculum(
                 model_output=model_output,
                 x0=x0,
                 sigma=sigma,
                 noise_schedule=self.noise,
-                step=self.current_step,
-                curriculum_config=getattr(self.train_config, 'curriculum', None)
+                training_step=self.current_step,
+                preschool_time=getattr(self.train_config.curriculum, 'decay_steps', 5000) if hasattr(self.train_config, 'curriculum') else 5000
             )
         else:
             # Original score-based loss (placeholder - implement if needed)

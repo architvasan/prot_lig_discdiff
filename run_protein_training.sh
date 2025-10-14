@@ -10,8 +10,8 @@ set -e  # Exit on any error
 # =============================================================================
 
 # Default paths (modify these for your setup)
-CONFIG_FILE="config_protein.yaml"
-DATA_FILE="/path/to/your/protein_data.jsonl"  # CHANGE THIS
+CONFIG_FILE="/lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/prot_lig_discdiff/config_protein.yaml"
+DATA_FILE="/lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/input_data/processed_pubchem_subset_50k.pt"  # CHANGE THIS
 WORK_DIR="./experiments/protein_sedd_$(date +%Y%m%d_%H%M%S)"
 
 # Default settings
@@ -77,13 +77,6 @@ check_requirements() {
     if [[ ! -f "$DATA_FILE" ]]; then
         echo "❌ Data file not found: $DATA_FILE"
         echo "💡 Specify the correct data file with --data"
-        exit 1
-    fi
-    
-    # Check if training script exists
-    if [[ ! -f "run_train_clean.py" ]]; then
-        echo "❌ Training script not found: run_train_clean.py"
-        echo "💡 Make sure you're in the correct directory"
         exit 1
     fi
     
@@ -190,7 +183,7 @@ main() {
     echo "📋 Copied config to work directory"
     
     # Build command
-    CMD="python run_train_clean.py"
+    CMD="python /lus/flare/projects/FoundEpidem/xlian/IDEAL/Diffusion/prot_lig_discdiff/protlig_ddiff/train/run_train_clean.py"
     CMD="$CMD --config $CONFIG_FILE"
     CMD="$CMD --datafile $DATA_FILE"
     CMD="$CMD --work_dir $WORK_DIR"

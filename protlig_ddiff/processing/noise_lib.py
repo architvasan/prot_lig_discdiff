@@ -144,6 +144,13 @@ class GeometricNoise(Noise, nn.Module):
     def total_noise(self, t):
         return self.sigmas[0] ** (1 - t) * self.sigmas[1] ** t
 
+    def sigma(self, t):
+        """
+        Return the noise level at time t.
+        For GeometricNoise, this is the total noise accumulated.
+        """
+        return self.total_noise(t)
+
 
 class LogLinearNoise(Noise, nn.Module):
     """
@@ -163,6 +170,13 @@ class LogLinearNoise(Noise, nn.Module):
     def total_noise(self, t):
         return -torch.log1p(-(1 - self.eps) * t)
 
+    def sigma(self, t):
+        """
+        Return the noise level at time t.
+        For LogLinearNoise, this is the total noise accumulated.
+        """
+        return self.total_noise(t)
+
 
 class CosineNoise(Noise, nn.Module):
     def __init__(self, sigma_min=1e-3, sigma_max=1.0, T=1.0, learnable=False):
@@ -180,4 +194,11 @@ class CosineNoise(Noise, nn.Module):
         # dσ/dt = (π/(2T))(σ_max-σ_min) sin(π t/T)
         s0, s1 = self.sigmas[0], self.sigmas[1]
         return (math.pi/(2*self.T))*(s1 - s0)*torch.sin(math.pi * t / self.T)
+
+    def sigma(self, t):
+        """
+        Return the noise level at time t.
+        For CosineNoise, this is the total noise accumulated.
+        """
+        return self.total_noise(t)
 

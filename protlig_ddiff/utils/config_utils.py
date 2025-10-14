@@ -86,13 +86,13 @@ def get_vocab_size_from_config(config):
 def get_model_config_from_config(config):
     """Extract model configuration parameters."""
     model_config = {
-        'dim': safe_getattr(config, 'model.dim', 768),
-        'n_heads': safe_getattr(config, 'model.n_heads', 12),
-        'n_layers': safe_getattr(config, 'model.n_layers', 12),
-        'vocab_size': get_vocab_size_from_config(config),
-        'max_seq_len': safe_getattr(config, 'model.max_seq_len', 512),
-        'cond_dim': safe_getattr(config, 'model.cond_dim', 128),
-        'scale_by_sigma': safe_getattr(config, 'model.scale_by_sigma', False),
+        'dim': int(safe_getattr(config, 'model.dim', 768)),
+        'n_heads': int(safe_getattr(config, 'model.n_heads', 12)),
+        'n_layers': int(safe_getattr(config, 'model.n_layers', 12)),
+        'vocab_size': int(get_vocab_size_from_config(config)),
+        'max_seq_len': int(safe_getattr(config, 'model.max_seq_len', 512)),
+        'cond_dim': int(safe_getattr(config, 'model.cond_dim', 128)),
+        'scale_by_sigma': bool(safe_getattr(config, 'model.scale_by_sigma', False)),
     }
     
     return model_config
@@ -101,16 +101,16 @@ def get_model_config_from_config(config):
 def get_training_config_from_config(config):
     """Extract training configuration parameters."""
     training_config = {
-        'batch_size': safe_getattr(config, 'training.batch_size', 32),
-        'learning_rate': safe_getattr(config, 'training.learning_rate', 1e-4),
-        'weight_decay': safe_getattr(config, 'training.weight_decay', 0.01),
-        'warmup_steps': safe_getattr(config, 'training.warmup_steps', 1000),
-        'max_steps': safe_getattr(config, 'training.max_steps', 100000),
-        'gradient_clip_norm': safe_getattr(config, 'training.gradient_clip_norm', 1.0),
-        'accumulate_grad_batches': safe_getattr(config, 'training.accumulate_grad_batches', 1),
-        'use_ema': safe_getattr(config, 'training.use_ema', True),
-        'ema_decay': safe_getattr(config, 'training.ema_decay', 0.9999),
-        'use_subs_loss': safe_getattr(config, 'training.use_subs_loss', True),
+        'batch_size': int(safe_getattr(config, 'training.batch_size', 32)),
+        'learning_rate': float(safe_getattr(config, 'training.learning_rate', 1e-4)),
+        'weight_decay': float(safe_getattr(config, 'training.weight_decay', 0.01)),
+        'warmup_steps': int(safe_getattr(config, 'training.warmup_steps', 1000)),
+        'max_steps': int(safe_getattr(config, 'training.max_steps', 100000)),
+        'gradient_clip_norm': float(safe_getattr(config, 'training.gradient_clip_norm', 1.0)),
+        'accumulate_grad_batches': int(safe_getattr(config, 'training.accumulate_grad_batches', 1)),
+        'use_ema': bool(safe_getattr(config, 'training.use_ema', True)),
+        'ema_decay': float(safe_getattr(config, 'training.ema_decay', 0.9999)),
+        'use_subs_loss': bool(safe_getattr(config, 'training.use_subs_loss', True)),
     }
     
     return training_config
@@ -119,11 +119,11 @@ def get_training_config_from_config(config):
 def get_data_config_from_config(config):
     """Extract data configuration parameters."""
     data_config = {
-        'max_length': safe_getattr(config, 'data.max_length', 512),
-        'tokenize_on_fly': safe_getattr(config, 'data.tokenize_on_fly', False),
-        'use_streaming': safe_getattr(config, 'data.use_streaming', False),
-        'num_workers': safe_getattr(config, 'data.num_workers', 4),
-        'pin_memory': safe_getattr(config, 'data.pin_memory', True),
+        'max_length': int(safe_getattr(config, 'data.max_length', 512)),
+        'tokenize_on_fly': bool(safe_getattr(config, 'data.tokenize_on_fly', False)),
+        'use_streaming': bool(safe_getattr(config, 'data.use_streaming', False)),
+        'num_workers': int(safe_getattr(config, 'data.num_workers', 4)),
+        'pin_memory': bool(safe_getattr(config, 'data.pin_memory', True)),
     }
     
     return data_config
@@ -132,10 +132,10 @@ def get_data_config_from_config(config):
 def get_noise_config_from_config(config):
     """Extract noise schedule configuration."""
     noise_config = {
-        'type': safe_getattr(config, 'noise.type', 'loglinear'),
-        'eps': safe_getattr(config, 'noise.eps', 1e-3),
-        'sigma_min': safe_getattr(config, 'noise.sigma_min', 1e-4),
-        'sigma_max': safe_getattr(config, 'noise.sigma_max', 1.0),
+        'type': str(safe_getattr(config, 'noise.type', 'loglinear')),
+        'eps': float(safe_getattr(config, 'noise.eps', 1e-3)),
+        'sigma_min': float(safe_getattr(config, 'noise.sigma_min', 1e-4)),
+        'sigma_max': float(safe_getattr(config, 'noise.sigma_max', 1.0)),
     }
     
     return noise_config
@@ -144,10 +144,10 @@ def get_noise_config_from_config(config):
 def get_curriculum_config_from_config(config):
     """Extract curriculum learning configuration."""
     curriculum_config = {
-        'enabled': safe_getattr(config, 'curriculum.enabled', True),
-        'start_bias': safe_getattr(config, 'curriculum.start_bias', 0.8),
-        'end_bias': safe_getattr(config, 'curriculum.end_bias', 0.0),
-        'decay_steps': safe_getattr(config, 'curriculum.decay_steps', 10000),
+        'enabled': bool(safe_getattr(config, 'curriculum.enabled', True)),
+        'start_bias': float(safe_getattr(config, 'curriculum.start_bias', 0.8)),
+        'end_bias': float(safe_getattr(config, 'curriculum.end_bias', 0.0)),
+        'decay_steps': int(safe_getattr(config, 'curriculum.decay_steps', 10000)),
     }
     
     return curriculum_config

@@ -137,7 +137,7 @@ class UniRef50Dataset(Dataset):
     def _load_data(self):
         """Load all data into memory."""
         print(f"📂 Loading data from {self.data_file}")
-        
+
         if self.data_file.endswith('.json'):
             with open(self.data_file, 'r') as f:
                 self.data = json.load(f)
@@ -146,9 +146,13 @@ class UniRef50Dataset(Dataset):
             with open(self.data_file, 'r') as f:
                 for line in f:
                     self.data.append(json.loads(line.strip()))
+        elif self.data_file.endswith('.pt'):
+            import torch
+            self.data = torch.load(self.data_file, weights_only=False)
+            print(f"📊 Loaded PyTorch tensor file with {len(self.data)} items")
         else:
             raise ValueError(f"Unsupported file format: {self.data_file}")
-        
+
         print(f"✅ Loaded {len(self.data)} sequences")
 
     def _setup_streaming(self):
@@ -181,7 +185,7 @@ class UniRef50Dataset(Dataset):
             if self.tokenize_on_fly:
                 # Tokenize on the fly
                 if isinstance(item, dict):
-                    sequence = item.get('sequence', item.get('text', ''))
+                    sequence = item.get('sequence', item.get('text', item.get('ligand_smiles', '')))
                 else:
                     sequence = str(item)
                 
@@ -226,7 +230,7 @@ class UniRef50Dataset(Dataset):
             if self.tokenize_on_fly:
                 # Tokenize on the fly
                 if isinstance(item, dict):
-                    sequence = item.get('sequence', item.get('text', ''))
+                    sequence = item.get('sequence', item.get('text', item.get('ligand_smiles', '')))
                 else:
                     sequence = str(item)
                 

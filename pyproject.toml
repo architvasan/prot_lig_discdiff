@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protlig_ddiff"
+version = "1.0.0"
+description = "Protein-Ligand Discrete Diffusion Models"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=1.12.0",
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "tqdm>=4.62.0",
+    "wandb>=0.12.0",
+    "pyyaml>=6.0",
+    "einops>=0.4.0",
+    "transformers>=4.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=3.0",
+    "black>=22.0",
+    "isort>=5.10",
+    "flake8>=4.0",
+]
+aurora = [
+    "intel-extension-for-pytorch",
+]
+cuda = [
+    "torch[cuda]",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/prot_lig_discdiff"
+Repository = "https://github.com/yourusername/prot_lig_discdiff"
+Issues = "https://github.com/yourusername/prot_lig_discdiff/issues"
+
+[project.scripts]
+protlig-train = "protlig_ddiff.train.run_train_clean:main"
+
+[tool.setuptools.packages.find]
+include = ["protlig_ddiff*"]
+
+[tool.setuptools.package-data]
+protlig_ddiff = ["*.yaml", "*.yml"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.pytest.ini_options]
+testpaths = ["protlig_ddiff/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
