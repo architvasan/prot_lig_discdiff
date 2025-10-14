@@ -161,6 +161,23 @@ class UniRef50Dataset(Dataset):
 
         print(f"✅ Loaded {len(self.data)} sequences")
 
+        # Debug: Check first few items to see if they're all the same
+        if len(self.data) > 0:
+            print(f"🔍 Data sample check:")
+            for i in range(min(3, len(self.data))):
+                item = self.data[i]
+                if isinstance(item, torch.Tensor):
+                    item_preview = item[:10] if len(item) > 10 else item
+                    item_hash = hash(tuple(item[:20].numpy())) if len(item) >= 20 else hash(tuple(item.numpy()))
+                else:
+                    item_preview = str(item)[:50]
+                    item_hash = hash(str(item))
+                print(f"   Index {i}: hash={item_hash}, preview={item_preview}")
+
+                if i > 0 and item_hash == prev_hash:
+                    print(f"🚨 DATA FILE BUG: All items in data file are identical!")
+                prev_hash = item_hash
+
     def _setup_streaming(self):
         """Setup for streaming data loading."""
         print(f"🌊 Setting up streaming from {self.data_file}")
@@ -195,6 +212,15 @@ class UniRef50Dataset(Dataset):
     def _get_memory_item(self, idx):
         """Get item from memory-loaded data."""
         try:
+            # Debug: Check if we're always accessing the same index
+            if hasattr(self, '_debug_indices'):
+                self._debug_indices.append(idx)
+                if len(self._debug_indices) <= 5:
+                    print(f"🔍 Dataset accessing index {idx}, data length: {len(self.data)}")
+            else:
+                self._debug_indices = [idx]
+                print(f"🔍 Dataset first access - index {idx}, data length: {len(self.data)}")
+
             item = self.data[idx]
             
             if self.tokenize_on_fly:
@@ -228,8 +254,12 @@ class UniRef50Dataset(Dataset):
                 
         except Exception as e:
             print(f"❌ Error loading memory item {idx}: {e}")
+            print(f"   Data type: {type(self.data)}, length: {len(self.data) if hasattr(self.data, '__len__') else 'unknown'}")
+            print(f"   Item type: {type(item) if 'item' in locals() else 'not loaded'}")
             # Return a dummy sequence
-            return torch.zeros(self.max_length, dtype=torch.long)
+            dummy_seq = torch.zeros(self.max_length, dtype=torch.long)
+            print(f"🚨 Returning dummy sequence for index {idx}: {dummy_seq[:10]}")
+            return dummy_seq
 
     def _get_streaming_item(self, idx):
         """Get item from streaming data."""
