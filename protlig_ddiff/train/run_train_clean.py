@@ -938,11 +938,12 @@ class UniRef50Trainer:
                     # Reset accumulation counter
                     self.accumulation_step = 0
 
-                    # Increment step counter (only after actual optimization step)
-                    self.current_step += 1
                 else:
                     # No optimization step, set grad_norm to 0 for logging
                     grad_norm = 0.0
+                # Increment step counter (only after actual optimization step)
+                self.current_step += 1
+
 
                 # Update metrics
                 step_time = time.time() - step_start_time

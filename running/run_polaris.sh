@@ -352,7 +352,6 @@ main() {
         
         # Run with MPI
         mpiexec -n $((NODES * PPN)) -ppn $PPN \
-            $AFFINITY_MASK \
             python protlig_ddiff/train/run_train_clean.py \
             --config "$CONFIG_FILE" \
             --datafile "$DATA_FILE" \
@@ -363,7 +362,7 @@ main() {
             --wandb_name "$WANDB_NAME" \
             --seed "$SEED" \
             2>&1 | tee "$WORK_DIR/training.log"
-        
+        #$AFFINITY_MASK \
         if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
             echo "🎉 Training completed successfully!"
         else

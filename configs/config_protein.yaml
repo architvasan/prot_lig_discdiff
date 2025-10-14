@@ -7,22 +7,22 @@ devicetype: cuda
 
 # Model configuration - balanced for protein sequences
 model:
-  dim: 512                    # Model dimension (smaller for faster training)
-  n_heads: 8                  # Number of attention heads
-  n_layers: 8                 # Number of transformer layers
+  dim: 1024                    # Model dimension (smaller for faster training)
+  n_heads: 16                  # Number of attention heads
+  n_layers: 16                 # Number of transformer layers
   max_seq_len: 512           # Maximum protein sequence length
-  cond_dim: 128              # Time embedding dimension
+  cond_dim: 256              # Time embedding dimension
   scale_by_sigma: false      # Disable for SUBS loss (recommended)
 
 # Training configuration - optimized for stability
 training:
-  batch_size: 16             # Mini-batch size (adjust based on memory)
+  batch_size: 32             # Mini-batch size (adjust based on memory)
   learning_rate: 1.0e-4        # Learning rate (reduced for numerical stability)
   weight_decay: 0.01         # Weight decay for regularization
   warmup_steps: 2000         # Warmup steps (longer for stability)
   max_steps: 50000           # Total training steps
   gradient_clip_norm: 0.5    # Gradient clipping (reduced for stability)
-  accumulate_grad_batches: 8 # Effective batch = 16 * 8 = 128
+  accumulate_grad_batches: 4 # Effective batch = 16 * 8 = 128
   use_ema: true              # Use exponential moving average
   ema_decay: 0.9999          # EMA decay rate
   use_subs_loss: true        # Use SUBS loss (recommended for stability)
