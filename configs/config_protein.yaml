@@ -46,9 +46,9 @@ noise:
   sigma_min: 1e-4            # Minimum noise level
   sigma_max: 2.0             # Maximum noise level
 
-# Curriculum learning - helps with training stability
+# Curriculum learning - DISABLED for debugging
 curriculum:
-  enabled: true              # Enable curriculum learning
+  enabled: false             # DISABLED: Turn off curriculum learning
   start_bias: 0.8            # Start with 80% bias towards low noise
   end_bias: 0.0              # End with uniform sampling
   decay_steps: 15000         # Decay over 15k steps (30% of training)
