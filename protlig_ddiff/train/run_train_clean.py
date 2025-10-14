@@ -679,6 +679,18 @@ class UniRef50Trainer:
         # Corrupt data
         xt = self.graph.sample_transition(x0, sigma)#[:, None])
         print(f"🔍 xt shape after transition: {xt.shape}")
+
+        # Debug: Compare x0 vs xt to verify corruption is working
+        print(f"🔍 x0 first sequence: {x0[0, :10]}")
+        print(f"🔍 xt first sequence: {xt[0, :10]}")
+        print(f"🔍 Corruption check - same?: {torch.equal(x0[0], xt[0])}")
+        print(f"🔍 Sigma for first sequence: {sigma[0]:.4f}")
+
+        # Count how many tokens changed
+        changed_tokens = (x0[0] != xt[0]).sum().item()
+        total_tokens = x0[0].numel()
+        corruption_rate = changed_tokens / total_tokens
+        print(f"🔍 Corruption rate: {changed_tokens}/{total_tokens} = {corruption_rate:.3f}")
         #print(f"{xt.shape=}")
         #print(f"{x0.shape=}")
 
