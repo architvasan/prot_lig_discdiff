@@ -197,7 +197,7 @@ def save_checkpoint(model, optimizer, scheduler, ema_model, step, loss, save_pat
         checkpoint['ema_state_dict'] = ema_model.state_dict()
     
     torch.save(checkpoint, save_path)
-    print(f"✅ Checkpoint saved: {save_path}")
+    # print(f"✅ Checkpoint saved: {save_path}")
 
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None, ema_model=None):
@@ -222,7 +222,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None, ema_
     step = checkpoint.get('step', 0)
     loss = checkpoint.get('loss', float('inf'))
     
-    print(f"✅ Checkpoint loaded: step {step}, loss {loss:.4f}")
+    # print(f"✅ Checkpoint loaded: step {step}, loss {loss:.4f}")
     return step, loss
 
 
@@ -244,11 +244,11 @@ def setup_wandb(project_name, run_name, config, resume_id=None):
                 config=config
             )
         
-        print(f"✅ Wandb initialized: {project_name}/{run_name}")
+        # print(f"✅ Wandb initialized: {project_name}/{run_name}")
         return run
-    
+
     except Exception as e:
-        print(f"⚠️  Failed to initialize wandb: {e}")
+        # print(f"⚠️  Failed to initialize wandb: {e}")
         return None
 
 
@@ -259,7 +259,8 @@ def log_metrics(metrics, step, wandb_run='protlig_dd', log_file=None):
         try:
             wandb_run.log(metrics, step=step)
         except Exception as e:
-            print(f"⚠️  Failed to log to wandb: {e}")
+            # print(f"⚠️  Failed to log to wandb: {e}")
+            pass
     
     # Log to file
     if log_file is not None:
@@ -268,7 +269,8 @@ def log_metrics(metrics, step, wandb_run='protlig_dd', log_file=None):
             with open(log_file, 'a') as f:
                 f.write(json.dumps(log_entry) + '\n')
         except Exception as e:
-            print(f"⚠️  Failed to log to file: {e}")
+            # print(f"⚠️  Failed to log to file: {e}")
+            pass
 
 
 def format_time(seconds):

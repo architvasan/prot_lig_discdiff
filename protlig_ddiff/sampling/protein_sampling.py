@@ -252,16 +252,16 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
         List of sampled protein sequences
     """
 
-    print(f"🔍 Debug: sample_during_training called at step {step}")
+    # print(f"🔍 Debug: sample_during_training called at step {step}")
 
     # Get sampling config
     sampling_config = getattr(config, 'sampling', None)
-    print(f"🔍 Debug: sampling_config from config: {sampling_config}")
-    print(f"🔍 Debug: config type: {type(config)}")
-    print(f"🔍 Debug: config attributes: {dir(config) if hasattr(config, '__dict__') else 'no __dict__'}")
+    # print(f"🔍 Debug: sampling_config from config: {sampling_config}")
+    # print(f"🔍 Debug: config type: {type(config)}")
+    # print(f"🔍 Debug: config attributes: {dir(config) if hasattr(config, '__dict__') else 'no __dict__'}")
 
     if sampling_config is None:
-        print("🔍 Debug: Using default sampling config")
+        # print("🔍 Debug: Using default sampling config")
         # Default sampling config
         batch_size = 4
         max_length = 128
@@ -297,15 +297,15 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
         else:
             predictor = getattr(sampling_config, 'predictor', 'analytic')
 
-        print(f"🔍 Debug: Using config - batch_size: {batch_size}, max_length: {max_length}, steps: {steps}, predictor: {predictor}")
+        # print(f"🔍 Debug: Using config - batch_size: {batch_size}, max_length: {max_length}, steps: {steps}, predictor: {predictor}")
 
     # Create sampler
-    print(f"🔍 Debug: Creating ProteinSampler...")
+    # print(f"🔍 Debug: Creating ProteinSampler...")
     sampler = ProteinSampler(model, graph, noise, device=device)
 
     # Sample sequences
     try:
-        print(f"🔍 Debug: Starting sampling...")
+        # print(f"🔍 Debug: Starting sampling...")
         sequences = sampler.sample_unconditional(
             batch_size=batch_size,
             max_length=max_length,
@@ -313,7 +313,7 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
             predictor=predictor
         )
 
-        print(f"🔍 Debug: Sampling completed, got {len(sequences) if sequences else 0} sequences")
+        # print(f"🔍 Debug: Sampling completed, got {len(sequences) if sequences else 0} sequences")
 
         # Validate sequences
         if sequences is None:

@@ -79,7 +79,7 @@ def get_vocab_size_from_config(config):
             return int(vocab_size)
     
     # Default fallback
-    print("⚠️  No vocab_size found in config, using default: 33")
+    # print("⚠️  No vocab_size found in config, using default: 33")
     return 33
 
 
@@ -186,20 +186,23 @@ def print_config_summary(config):
     
     # Model config
     model_config = get_model_config_from_config(config)
-    print("🏗️  Model Configuration:")
+    # print("🏗️  Model Configuration:")
     for key, value in model_config.items():
-        print(f"   {key}: {value}")
+        # print(f"   {key}: {value}")
+        pass
     
     # Training config
     training_config = get_training_config_from_config(config)
-    print("\n🚀 Training Configuration:")
+    # print("\n🚀 Training Configuration:")
     for key, value in training_config.items():
-        print(f"   {key}: {value}")
-    
+        # print(f"   {key}: {value}")
+        pass
+
     # Data config
     data_config = get_data_config_from_config(config)
-    print("\n📊 Data Configuration:")
+    # print("\n📊 Data Configuration:")
     for key, value in data_config.items():
-        print(f"   {key}: {value}")
+        # print(f"   {key}: {value}")
+        pass
     
-    print("="*60 + "\n")
+    # print("="*60 + "\n")

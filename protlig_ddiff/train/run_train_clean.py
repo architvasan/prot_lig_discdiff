@@ -2,7 +2,7 @@
 Clean and organized training script for UniRef50 discrete diffusion training.
 """
 from mpi4py import MPI
-print("loaded MPI")
+# print("loaded MPI")
 import os
 import sys
 import time
@@ -28,10 +28,11 @@ def setup_temp_directory():
                 os.environ['TMPDIR'] = temp_dir
                 os.environ['TEMP'] = temp_dir
                 os.environ['TMP'] = temp_dir
-                print(f"🔧 Set temporary directory to: {temp_dir}")
+                # print(f"🔧 Set temporary directory to: {temp_dir}")
                 return temp_dir
             except Exception as e:
-                print(f"⚠️  Failed to create temp dir in {tmp_dir}: {e}")
+                # print(f"⚠️  Failed to create temp dir in {tmp_dir}: {e}")
+                pass
                 continue
 
     # If all else fails, use current directory
@@ -40,7 +41,7 @@ def setup_temp_directory():
     os.environ['TMPDIR'] = current_tmp
     os.environ['TEMP'] = current_tmp
     os.environ['TMP'] = current_tmp
-    print(f"🔧 Set temporary directory to: {current_tmp}")
+    # print(f"🔧 Set temporary directory to: {current_tmp}")
     return current_tmp
 
 # Setup temp directory before any other imports that might use multiprocessing
@@ -53,9 +54,10 @@ def cleanup_temp_directory():
         try:
             import shutil
             shutil.rmtree(_temp_dir_created)
-            print(f"🧹 Cleaned up temporary directory: {_temp_dir_created}")
+            # print(f"🧹 Cleaned up temporary directory: {_temp_dir_created}")
         except Exception as e:
-            print(f"⚠️  Failed to cleanup temp directory {_temp_dir_created}: {e}")
+            # print(f"⚠️  Failed to cleanup temp directory {_temp_dir_created}: {e}")
+            pass
 
 import torch
 import torch.nn.functional as F
@@ -106,7 +108,7 @@ def _setup_ddp_polaris(rank, world_size):
     # DDP: Set environmental variables used by PyTorch
     SIZE = MPI.COMM_WORLD.Get_size()
     RANK = MPI.COMM_WORLD.Get_rank()
-    print(SIZE, RANK)
+    # print(SIZE, RANK)
     LOCAL_RANK = int(os.environ.get('PMI_LOCAL_RANK', '0'))
 
     # Set environment variables
@@ -120,7 +122,7 @@ def _setup_ddp_polaris(rank, world_size):
     os.environ['MASTER_ADDR'] = MASTER_ADDR
     os.environ['MASTER_PORT'] = str(2345)
 
-    print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
+    # print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
 
     # Initialize distributed communication
     torch.distributed.init_process_group(backend='nccl', init_method='env://')
@@ -132,10 +134,11 @@ def _setup_ddp_polaris(rank, world_size):
     # Verify DDP setup
     actual_rank = dist.get_rank()
     actual_world_size = dist.get_world_size()
-    print(f"🔍 DDP Verification - MPI rank: {RANK}, PyTorch rank: {actual_rank}, device: {device_id}")
+    # print(f"🔍 DDP Verification - MPI rank: {RANK}, PyTorch rank: {actual_rank}, device: {device_id}")
 
     if RANK != actual_rank:
-        print(f"🚨 WARNING: MPI rank ({RANK}) != PyTorch rank ({actual_rank})")
+        # print(f"🚨 WARNING: MPI rank ({RANK}) != PyTorch rank ({actual_rank})")
+        pass
 
     return actual_rank, device_id, actual_world_size
 
@@ -262,13 +265,13 @@ class UniRef50Trainer:
         # Verify device availability
         if self.device.type == 'cuda':
             if not torch.cuda.is_available():
-                print("⚠️  CUDA not available, falling back to CPU")
+                # print("⚠️  CUDA not available, falling back to CPU")
                 self.device = torch.device('cpu')
             elif self.device.index is not None and self.device.index >= torch.cuda.device_count():
-                print(f"⚠️  GPU {self.device.index} not available, using GPU 0")
+                # print(f"⚠️  GPU {self.device.index} not available, using GPU 0")
                 self.device = torch.device('cuda:0')
 
-        print(f"🔧 Environment setup: device={self.device}, seed={self.config.seed}")
+        # print(f"🔧 Environment setup: device={self.device}, seed={self.config.seed}")
 
         # Set CUDA device if using GPU
         if self.device.type == 'cuda':
@@ -278,11 +281,12 @@ class UniRef50Trainer:
         """Setup model, data, and related components."""
         # Print config summary
         if is_main_process():
-            print("📋 Configuration Summary:")
-            print(f"  Model: dim={self.config.model.dim}, layers={self.config.model.n_layers}, heads={self.config.model.n_heads}")
-            print(f"  Training: lr={self.config.training.learning_rate}, batch_size={self.config.training.batch_size}")
-            print(f"  Data: max_length={self.config.data.max_length}, tokenize_on_fly={self.config.data.tokenize_on_fly}")
-            print(f"  Noise: type={self.config.noise.type}")
+            # print("📋 Configuration Summary:")
+            # print(f"  Model: dim={self.config.model.dim}, layers={self.config.model.n_layers}, heads={self.config.model.n_heads}")
+            # print(f"  Training: lr={self.config.training.learning_rate}, batch_size={self.config.training.batch_size}")
+            # print(f"  Data: max_length={self.config.data.max_length}, tokenize_on_fly={self.config.data.tokenize_on_fly}")
+            # print(f"  Noise: type={self.config.noise.type}")
+            pass
 
         # Setup graph and noise
         vocab_size = self.config.tokens
@@ -295,7 +299,7 @@ class UniRef50Trainer:
         elif noise_type == 'cosine':
             self.noise = noise_lib.CosineNoise()
         else:
-            print(f"⚠️  Unknown noise type: {noise_type}, defaulting to LogLinear")
+            # print(f"⚠️  Unknown noise type: {noise_type}, defaulting to LogLinear")
             self.noise = noise_lib.LogLinearNoise()
 
         # Setup model - pass the config directly
@@ -308,8 +312,8 @@ class UniRef50Trainer:
         # Setup data
         self.setup_data_loaders()
         
-        print(f"🏗️  Model setup: {sum(p.numel() for p in self.model.parameters()):,} parameters")
-        print(f"📊 Data setup: {len(self.train_loader)} batches per epoch")
+        # print(f"🏗️  Model setup: {sum(p.numel() for p in self.model.parameters()):,} parameters")
+        # print(f"📊 Data setup: {len(self.train_loader)} batches per epoch")
     
     def setup_data_loaders(self):
         """Setup training and validation data loaders."""
@@ -318,9 +322,11 @@ class UniRef50Trainer:
         try:
             if mp.get_start_method(allow_none=True) != 'spawn':
                 mp.set_start_method('spawn', force=True)
-                print("🔧 Set multiprocessing start method to 'spawn'")
+                # print("🔧 Set multiprocessing start method to 'spawn'")
+                pass
         except RuntimeError as e:
-            print(f"⚠️  Could not set multiprocessing start method: {e}")
+            # print(f"⚠️  Could not set multiprocessing start method: {e}")
+            pass
 
         # Add timeout for data loading operations
         import signal
@@ -329,7 +335,7 @@ class UniRef50Trainer:
             raise TimeoutError("Data loading operation timed out")
 
         # Training dataset with timeout protection
-        print("📂 Loading training dataset...")
+        # print("📂 Loading training dataset...")
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.alarm(300)  # 5 minute timeout for dataset loading
 
@@ -342,9 +348,9 @@ class UniRef50Trainer:
             # Disable streaming for .pt files (binary format doesn't support streaming)
             if self.config.datafile.endswith('.pt'):
                 use_streaming = False
-                print("🔧 Disabled streaming for .pt file (binary format)")
+                # print("🔧 Disabled streaming for .pt file (binary format)")
 
-            print(f"🔧 Dataset settings: tokenize_on_fly={tokenize_on_fly}, use_streaming={use_streaming}, max_length={max_length}")
+            # print(f"🔧 Dataset settings: tokenize_on_fly={tokenize_on_fly}, use_streaming={use_streaming}, max_length={max_length}")
 
             train_dataset = UniRef50Dataset(
                 data_file=self.config.datafile,
@@ -353,10 +359,10 @@ class UniRef50Trainer:
                 use_streaming=use_streaming
             )
             signal.alarm(0)  # Cancel timeout
-            print(f"✅ Dataset loaded successfully: {len(train_dataset)} samples")
+            # print(f"✅ Dataset loaded successfully: {len(train_dataset)} samples")
         except TimeoutError:
             signal.alarm(0)
-            print("⚠️  Dataset loading timed out, trying with streaming=True")
+            # print("⚠️  Dataset loading timed out, trying with streaming=True")
             train_dataset = UniRef50Dataset(
                 data_file=self.config.datafile,
                 tokenize_on_fly=self.config.data.get('tokenize_on_fly', False),
@@ -367,12 +373,12 @@ class UniRef50Trainer:
         # Setup sampler for DDP
         train_sampler = None
         if self.config.world_size > 1:
-            print(f"🔍 DDP Debug - Rank {self.config.rank}/{self.config.world_size}: Setting up DistributedSampler")
-            print(f"   Dataset size: {len(train_dataset)}")
+            # print(f"🔍 DDP Debug - Rank {self.config.rank}/{self.config.world_size}: Setting up DistributedSampler")
+            # print(f"   Dataset size: {len(train_dataset)}")
 
             # Use rank-specific seed to ensure different sampling per rank
             sampler_seed = self.config.seed + self.config.rank * 1000
-            print(f"   Using sampler seed: {sampler_seed} (base: {self.config.seed}, rank: {self.config.rank})")
+            # print(f"   Using sampler seed: {sampler_seed} (base: {self.config.seed}, rank: {self.config.rank})")
 
             train_sampler = DistributedSampler(
                 train_dataset,
@@ -382,23 +388,25 @@ class UniRef50Trainer:
                 seed=sampler_seed  # Rank-specific seed
             )
 
-            print(f"   Sampler created - rank {self.config.rank} will see {len(train_sampler)} samples")
+            # print(f"   Sampler created - rank {self.config.rank} will see {len(train_sampler)} samples")
 
             # Test the sampler by getting first few indices
             sampler_indices = list(train_sampler)[:5]
-            print(f"   First 5 sampler indices for rank {self.config.rank}: {sampler_indices}")
+            # print(f"   First 5 sampler indices for rank {self.config.rank}: {sampler_indices}")
 
             # CRITICAL TEST: Check if dataset returns different items for different indices
-            print(f"🔍 Dataset test for rank {self.config.rank}:")
+            # print(f"🔍 Dataset test for rank {self.config.rank}:")
             for i, idx in enumerate(sampler_indices[:3]):
                 item = train_dataset[idx]
                 item_hash = hash(tuple(item[:20].numpy())) if hasattr(item, 'numpy') else hash(tuple(item[:20]))
-                print(f"   Index {idx} → hash: {item_hash}, first 10: {item[:10]}")
+                # print(f"   Index {idx} → hash: {item_hash}, first 10: {item[:10]}")
                 if i > 0 and item_hash == prev_hash:
-                    print(f"🚨 DATASET BUG: Index {idx} returns same data as previous index!")
+                    # print(f"🚨 DATASET BUG: Index {idx} returns same data as previous index!")
+                    pass
                 prev_hash = item_hash
         else:
-            print(f"🔍 Single process training - no DistributedSampler needed")
+            # print(f"🔍 Single process training - no DistributedSampler needed")
+            pass
         
         # Training data loader with fallback for num_workers
         num_workers = self.config.data.get('num_workers', 4)
@@ -406,21 +414,21 @@ class UniRef50Trainer:
         # For HPC systems, start with fewer workers to avoid hangs
         if self.config.world_size > 1:
             num_workers = min(num_workers, 2)  # Limit workers in distributed mode
-            print(f"🔧 Limited num_workers to {num_workers} for distributed training")
+            # print(f"🔧 Limited num_workers to {num_workers} for distributed training")
 
         # For large datasets, start with fewer workers to avoid memory issues
         dataset_size = len(train_dataset)
         if dataset_size > 1000000:  # 1M+ sequences
             num_workers = min(num_workers, 1)  # Start with 1 worker for large datasets
-            print(f"🔧 Large dataset detected ({dataset_size:,} samples), starting with {num_workers} worker(s)")
+            # print(f"🔧 Large dataset detected ({dataset_size:,} samples), starting with {num_workers} worker(s)")
 
         # Try to create data loader, reduce num_workers if issues occur
         for workers in [num_workers, max(1, num_workers // 2), 1, 0]:
             try:
-                print(f"🔧 Trying DataLoader with {workers} workers...")
+                # print(f"🔧 Trying DataLoader with {workers} workers...")
                 # Debug: Print DataLoader configuration
                 shuffle_setting = (train_sampler is None)
-                print(f"🔍 DataLoader config - shuffle: {shuffle_setting}, sampler: {train_sampler is not None}")
+                # print(f"🔍 DataLoader config - shuffle: {shuffle_setting}, sampler: {train_sampler is not None}")
 
                 self.train_loader = DataLoader(
                     train_dataset,
@@ -437,10 +445,11 @@ class UniRef50Trainer:
 
                 # Test the data loader by getting one batch
                 if workers == 0:
-                    print("✅ DataLoader created with 0 workers (no test needed)")
+                    # print("✅ DataLoader created with 0 workers (no test needed)")
                     break
                 else:
-                    print("🧪 Testing DataLoader...")
+                    # print("🧪 Testing DataLoader...")
+                    pass
                     import signal
 
                     def timeout_handler(signum, frame):
@@ -457,15 +466,16 @@ class UniRef50Trainer:
                             del test_iter, test_batch  # Clean up
                             signal.alarm(0)  # Cancel timeout
                             signal.signal(signal.SIGALRM, old_handler)  # Restore handler
-                            print(f"✅ DataLoader test successful with {workers} workers")
+                            # print(f"✅ DataLoader test successful with {workers} workers")
 
                             if workers != num_workers:
-                                print(f"🔧 Reduced num_workers to {workers} to avoid issues")
+                                # print(f"🔧 Reduced num_workers to {workers} to avoid issues")
+                                pass
                             break
                         except TimeoutError:
                             signal.alarm(0)  # Cancel timeout
                             signal.signal(signal.SIGALRM, old_handler)  # Restore handler
-                            print(f"⏰ DataLoader test timed out with {workers} workers")
+                            # print(f"⏰ DataLoader test timed out with {workers} workers")
                             if workers == 0:
                                 raise  # If even 0 workers fails, something is seriously wrong
                             continue  # Try with fewer workers
@@ -475,8 +485,8 @@ class UniRef50Trainer:
                 if ("AF_UNIX path too long" in error_msg or
                     "timeout" in error_msg.lower() or
                     "deadlock" in error_msg.lower()) and workers > 0:
-                    print(f"⚠️  DataLoader issue with {workers} workers: {error_msg[:100]}...")
-                    print(f"   Trying {max(1, workers // 2) if workers > 1 else 0} workers")
+                    # print(f"⚠️  DataLoader issue with {workers} workers: {error_msg[:100]}...")
+                    # print(f"   Trying {max(1, workers // 2) if workers > 1 else 0} workers")
                     continue
                 else:
                     raise
@@ -525,9 +535,9 @@ class UniRef50Trainer:
         # Setup sampling output file
         self.setup_sampling_output()
 
-        print("🚀 Training components initialized")
-        print(f"📊 Gradient accumulation: {self.accumulate_grad_batches} batches")
-        print(f"🔍 Sampling failure handling: max_failures={self.max_sampling_failures}, stop_on_failure={self.stop_on_sampling_failure}")
+        # print("🚀 Training components initialized")
+        # print(f"📊 Gradient accumulation: {self.accumulate_grad_batches} batches")
+        # print(f"🔍 Sampling failure handling: max_failures={self.max_sampling_failures}, stop_on_failure={self.stop_on_sampling_failure}")
 
     def setup_sampling_output(self):
         """Setup file for saving sampled sequences."""
@@ -540,7 +550,7 @@ class UniRef50Trainer:
         self.save_sampling_to_file = save_to_file
 
         if not save_to_file:
-            print("📝 Sampling file output disabled")
+            # print("📝 Sampling file output disabled")
             self.sampling_file = None
             return
 
@@ -561,7 +571,7 @@ class UniRef50Trainer:
                 f.write("# Generated on: {}\n".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 f.write("\n")
 
-            print(f"📝 Sampling output will be saved to: {self.sampling_file}")
+            # print(f"📝 Sampling output will be saved to: {self.sampling_file}")
 
     def save_sequences_to_file(self, sequences, step, epoch):
         """Save sampled sequences to file with step and epoch information."""
@@ -576,49 +586,52 @@ class UniRef50Trainer:
                     if clean_seq:  # Only save non-empty sequences
                         f.write(f"{step}\t{epoch}\t{i+1}\t{clean_seq}\n")
 
-            print(f"📝 Saved {len(sequences)} sequences to {self.sampling_file}")
+            # print(f"📝 Saved {len(sequences)} sequences to {self.sampling_file}")
+            pass
 
         except Exception as e:
-            print(f"⚠️  Failed to save sequences to file: {e}")
+            # print(f"⚠️  Failed to save sequences to file: {e}")
+            pass
 
     def sample_sequences(self, step):
         """Sample sequences during training for monitoring."""
-        print(f"🔍 Debug: sample_sequences called at step {step}, is_main_process: {is_main_process()}")
+        # print(f"🔍 Debug: sample_sequences called at step {step}, is_main_process: {is_main_process()}")
 
         if not is_main_process():
-            print("not main process but still sampling")
+            # print("not main process but still sampling")
             #return  # Only sample on main process
+            pass
 
         try:
             # Get sampling config
             sampling_config = getattr(self.config, 'sampling', None)
-            print(f"🔍 Debug: sampling_config: {sampling_config}")
+            # print(f"🔍 Debug: sampling_config: {sampling_config}")
 
             if sampling_config is None:
-                print("🔍 Debug: No sampling config found, skipping sampling")
+                # print("🔍 Debug: No sampling config found, skipping sampling")
                 return
 
             # Check if we should sample at this step
             sample_interval = getattr(sampling_config, 'sample_interval', 100)
             min_steps_before_sampling = getattr(sampling_config, 'min_steps_before_sampling', 500)
-            print(f"🔍 Debug: sample_interval: {sample_interval}, step % interval: {step % sample_interval}")
+            # print(f"🔍 Debug: sample_interval: {sample_interval}, step % interval: {step % sample_interval}")
 
             # Skip sampling if we're too early in training (model not stable yet)
             if step < min_steps_before_sampling:
-                print(f"🔍 Debug: Skipping sampling - step {step} < min_steps_before_sampling {min_steps_before_sampling}")
+                # print(f"🔍 Debug: Skipping sampling - step {step} < min_steps_before_sampling {min_steps_before_sampling}")
                 return
 
             if step % sample_interval != 0:
                 return
 
-            print(f"\n🧬 Sampling sequences at step {step}...")
+            # print(f"\n🧬 Sampling sequences at step {step}...")
 
             # Use EMA model if available, otherwise use main model
             model_to_use = self.ema_model.ema_model if self.ema_model else self.model
-            print(f"🔍 Debug: Using model: {'EMA' if self.ema_model else 'main'}")
+            # print(f"🔍 Debug: Using model: {'EMA' if self.ema_model else 'main'}")
 
             # Sample sequences
-            print(f"🔍 Debug: Calling sample_during_training...")
+            # print(f"🔍 Debug: Calling sample_during_training...")
             sequences = sample_during_training(
                 model=model_to_use,
                 graph=self.graph,
@@ -627,38 +640,41 @@ class UniRef50Trainer:
                 step=step,
                 device=self.device
             )
-            print(sequences)
-            print(f"🔍 Debug: Got {len(sequences) if sequences else 0} sequences")
+            # print(sequences)
+            # print(f"🔍 Debug: Got {len(sequences) if sequences else 0} sequences")
 
             # Check for critical sampling failures
             if sequences is None:
-                print("❌ CRITICAL: Sampling returned None - this indicates a serious error!")
+                # print("❌ CRITICAL: Sampling returned None - this indicates a serious error!")
                 self.sampling_failure_count += 1
                 if self.stop_on_sampling_failure and self.sampling_failure_count >= self.max_sampling_failures:
-                    print(f"💥 STOPPING TRAINING: Too many consecutive sampling failures ({self.sampling_failure_count}/{self.max_sampling_failures})!")
+                    # print(f"💥 STOPPING TRAINING: Too many consecutive sampling failures ({self.sampling_failure_count}/{self.max_sampling_failures})!")
                     raise RuntimeError(f"Training stopped due to {self.sampling_failure_count} consecutive sampling failures")
                 return
             elif len(sequences) == 0:
-                print("⚠️  Warning: Sampling returned empty list")
+                # print("⚠️  Warning: Sampling returned empty list")
                 self.sampling_failure_count += 1
                 if self.stop_on_sampling_failure and self.sampling_failure_count >= self.max_sampling_failures:
-                    print(f"💥 STOPPING TRAINING: Too many consecutive empty sampling results ({self.sampling_failure_count}/{self.max_sampling_failures})!")
+                    # print(f"💥 STOPPING TRAINING: Too many consecutive empty sampling results ({self.sampling_failure_count}/{self.max_sampling_failures})!")
                     raise RuntimeError(f"Training stopped due to {self.sampling_failure_count} consecutive empty sampling results")
                 return
             else:
                 # Reset failure counter on successful sampling
                 if self.sampling_failure_count > 0:
-                    print(f"✅ Sampling recovered after {self.sampling_failure_count} failures")
+                    # print(f"✅ Sampling recovered after {self.sampling_failure_count} failures")
+                    pass
                 self.sampling_failure_count = 0
 
             # Print sequences to console
             if sequences:
-                print(f"🧬 Generated {len(sequences)} sequences:")
+                # print(f"🧬 Generated {len(sequences)} sequences:")
                 for i, seq in enumerate(sequences[:3]):  # Show first 3
                     clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
-                    print(f"  Sample {i+1}: {clean_seq[:80]}{'...' if len(clean_seq) > 80 else ''}")
+                    # print(f"  Sample {i+1}: {clean_seq[:80]}{'...' if len(clean_seq) > 80 else ''}")
+                pass
             else:
-                print("🔍 Debug: No sequences generated")
+                # print("🔍 Debug: No sequences generated")
+                pass
 
             # Calculate current epoch (approximate)
             current_epoch = self.current_step // len(self.train_loader) if hasattr(self, 'train_loader') and len(self.train_loader) > 0 else 0
@@ -668,7 +684,7 @@ class UniRef50Trainer:
 
             # Log to wandb if available
             if self.wandb_run is not None and sequences:
-                print(f"🔍 Debug: Logging {len(sequences)} sequences to wandb")
+                # print(f"🔍 Debug: Logging {len(sequences)} sequences to wandb")
                 # Log first few sequences as text
                 sample_text = "\n".join([f"Sample {i+1}: {seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()[:100]}..."
                                        for i, seq in enumerate(sequences[:3])])
@@ -678,29 +694,30 @@ class UniRef50Trainer:
                     "samples/epoch": current_epoch
                 }, step=step)
             else:
-                print(f"🔍 Debug: Not logging to wandb - wandb_run: {self.wandb_run is not None}, sequences: {len(sequences) if sequences else 0}")
+                # print(f"🔍 Debug: Not logging to wandb - wandb_run: {self.wandb_run is not None}, sequences: {len(sequences) if sequences else 0}")
+                pass
 
         except Exception as e:
-            print(f"⚠️  Sampling failed at step {step}: {e}")
+            # print(f"⚠️  Sampling failed at step {step}: {e}")
             import traceback
-            traceback.print_exc()
+            # traceback.print_exc()
 
             # Track sampling failures and stop training if too many occur
             self.sampling_failure_count += 1
-            print(f"🔍 Sampling failure count: {self.sampling_failure_count}/{self.max_sampling_failures}")
+            # print(f"🔍 Sampling failure count: {self.sampling_failure_count}/{self.max_sampling_failures}")
 
             # Stop training if we have too many consecutive sampling failures
             if self.stop_on_sampling_failure and self.sampling_failure_count >= self.max_sampling_failures:
-                print(f"💥 STOPPING TRAINING: Too many consecutive sampling failures ({self.sampling_failure_count}/{self.max_sampling_failures})!")
+                # print(f"💥 STOPPING TRAINING: Too many consecutive sampling failures ({self.sampling_failure_count}/{self.max_sampling_failures})!")
                 raise RuntimeError(f"Training stopped due to {self.sampling_failure_count} consecutive sampling failures: {e}")
 
             # For fewer failures, just log and continue
-            print(f"⚠️  Continuing training despite sampling failure ({self.sampling_failure_count}/{self.max_sampling_failures})")
+            # print(f"⚠️  Continuing training despite sampling failure ({self.sampling_failure_count}/{self.max_sampling_failures})")
             return
     
     def train_step(self, batch):
         """Execute a single training step with gradient accumulation support."""
-        #print(f"🔄 train_step: Starting with batch type {type(batch)}, shape {batch.shape if hasattr(batch, 'shape') else 'no shape'}")
+        # print(f"🔄 train_step: Starting with batch type {type(batch)}, shape {batch.shape if hasattr(batch, 'shape') else 'no shape'}")
 
         # Move batch to device
         x0 = batch.to(self.device)
@@ -711,41 +728,42 @@ class UniRef50Trainer:
         sigma, dsigma = self.noise(t)
 
         # Debug: Print sigma shape and values
-        print(f"🔍 Sigma shape: {sigma.shape}, values: {sigma[:5]}")
-        print(f"🔍 DSigma shape: {dsigma.shape}, values: {dsigma[:5]}")
-        print(f"🔍 x0 shape: {x0.shape}")
+        # print(f"🔍 Sigma shape: {sigma.shape}, values: {sigma[:5]}")
+        # print(f"🔍 DSigma shape: {dsigma.shape}, values: {dsigma[:5]}")
+        # print(f"🔍 x0 shape: {x0.shape}")
 
         # Corrupt data
         xt = self.graph.sample_transition(x0, sigma)#[:, None])
-        print(f"🔍 xt shape after transition: {xt.shape}")
+        # print(f"🔍 xt shape after transition: {xt.shape}")
 
         # Debug: Compare x0 vs xt to verify corruption is working
-        print(f"🔍 Rank {self.config.rank}: x0 first sequence: {x0[0, :10]}")
-        print(f"🔍 Rank {self.config.rank}: xt first sequence: {xt[0, :10]}")
-        print(f"🔍 Rank {self.config.rank}: Corruption check - same?: {torch.equal(x0[0], xt[0])}")
-        print(f"🔍 Rank {self.config.rank}: Sigma for first sequence: {sigma[0]:.4f}")
+        # print(f"🔍 Rank {self.config.rank}: x0 first sequence: {x0[0, :10]}")
+        # print(f"🔍 Rank {self.config.rank}: xt first sequence: {xt[0, :10]}")
+        # print(f"🔍 Rank {self.config.rank}: Corruption check - same?: {torch.equal(x0[0], xt[0])}")
+        # print(f"🔍 Rank {self.config.rank}: Sigma for first sequence: {sigma[0]:.4f}")
 
         # Count how many tokens changed
         changed_tokens = (x0[0] != xt[0]).sum().item()
         total_tokens = x0[0].numel()
         corruption_rate = changed_tokens / total_tokens
-        print(f"🔍 Rank {self.config.rank}: Corruption rate: {changed_tokens}/{total_tokens} = {corruption_rate:.3f}")
+        # print(f"🔍 Rank {self.config.rank}: Corruption rate: {changed_tokens}/{total_tokens} = {corruption_rate:.3f}")
 
         # Debug: Check if all ranks are seeing the same data (DDP issue)
         if self.config.world_size > 1:
             # Create a simple hash of the first sequence to compare across ranks
             x0_hash = hash(tuple(x0[0, :20].cpu().numpy()))
-            print(f"🔍 Rank {self.config.rank}: x0 hash (first 20 tokens): {x0_hash}")
+            # print(f"🔍 Rank {self.config.rank}: x0 hash (first 20 tokens): {x0_hash}")
 
             # Also check batch diversity within this rank
             if x0.shape[0] > 1:
                 x0_hash_2 = hash(tuple(x0[1, :20].cpu().numpy()))
                 same_within_batch = (x0_hash == x0_hash_2)
-                print(f"🔍 Rank {self.config.rank}: Same sequences within batch?: {same_within_batch}")
+                # print(f"🔍 Rank {self.config.rank}: Same sequences within batch?: {same_within_batch}")
                 if same_within_batch:
-                    print(f"🚨 Rank {self.config.rank}: WARNING - All sequences in batch are identical!")
-        #print(f"{xt.shape=}")
-        #print(f"{x0.shape=}")
+                    # print(f"🚨 Rank {self.config.rank}: WARNING - All sequences in batch are identical!")
+                    pass
+        # print(f"{xt.shape=}")
+        # print(f"{x0.shape=}")
 
         # Forward pass
         if self.config.training.get('use_subs_loss', True):
@@ -754,11 +772,11 @@ class UniRef50Trainer:
 
             # Debug: Check for NaN/Inf in model output during training
             if torch.any(torch.isnan(model_output)):
-                print(f"🚨 NaN detected in training model output at step {self.current_step}")
-                print(f"   Input xt shape: {xt.shape}, sigma shape: {sigma.shape}")
-                print(f"   xt range: [{torch.min(xt):.4f}, {torch.max(xt):.4f}]")
-                print(f"   sigma range: [{torch.min(sigma):.4f}, {torch.max(sigma):.4f}]")
-                print(f"   NaN count in output: {torch.sum(torch.isnan(model_output))}")
+                # print(f"🚨 NaN detected in training model output at step {self.current_step}")
+                # print(f"   Input xt shape: {xt.shape}, sigma shape: {sigma.shape}")
+                # print(f"   xt range: [{torch.min(xt):.4f}, {torch.max(xt):.4f}]")
+                # print(f"   sigma range: [{torch.min(sigma):.4f}, {torch.max(sigma):.4f}]")
+                # print(f"   NaN count in output: {torch.sum(torch.isnan(model_output))}")
 
                 # Check model parameters for NaN
                 nan_params = []
@@ -766,14 +784,16 @@ class UniRef50Trainer:
                     if torch.any(torch.isnan(param)):
                         nan_params.append(name)
                 if nan_params:
-                    print(f"🚨 NaN detected in model parameters: {nan_params}")
+                    # print(f"🚨 NaN detected in model parameters: {nan_params}")
+                    pass
 
                 # This is a critical error - we should probably stop training
                 raise RuntimeError(f"Model produced NaN outputs at step {self.current_step}")
 
             if torch.any(torch.isinf(model_output)):
-                print(f"🚨 Inf detected in training model output at step {self.current_step}")
-                print(f"   Inf count in output: {torch.sum(torch.isinf(model_output))}")
+                # print(f"🚨 Inf detected in training model output at step {self.current_step}")
+                # print(f"   Inf count in output: {torch.sum(torch.isinf(model_output))}")
+                pass
 
             # Compute SUBS loss with curriculum learning
             loss, curric_dict = subs_loss_with_curriculum(
@@ -787,7 +807,7 @@ class UniRef50Trainer:
 
             # Check loss for NaN/Inf
             if torch.isnan(loss) or torch.isinf(loss):
-                print(f"🚨 Invalid loss detected at step {self.current_step}: {loss}")
+                # print(f"🚨 Invalid loss detected at step {self.current_step}: {loss}")
                 raise RuntimeError(f"Invalid loss at step {self.current_step}")
 
         else:
@@ -810,24 +830,25 @@ class UniRef50Trainer:
 
             # Debug high accuracy - print details every 100 steps
             if self.current_step % 100 == 0 and accuracy > 0.9:
-                print(f"\n🔍 High accuracy debug at step {self.current_step}:")
-                print(f"   Accuracy: {accuracy:.4f}")
-                print(f"   Avg sigma: {avg_sigma:.4f}")
-                print(f"   Sigma range: [{sigma.min().item():.4f}, {sigma.max().item():.4f}]")
-                print(f"   Model output shape: {model_output.shape}")
-                print(f"   Target shape: {x0.shape}")
+                # print(f"\n🔍 High accuracy debug at step {self.current_step}:")
+                # print(f"   Accuracy: {accuracy:.4f}")
+                # print(f"   Avg sigma: {avg_sigma:.4f}")
+                # print(f"   Sigma range: [{sigma.min().item():.4f}, {sigma.max().item():.4f}]")
+                # print(f"   Model output shape: {model_output.shape}")
+                # print(f"   Target shape: {x0.shape}")
 
                 # Check if model is just predicting the same token everywhere
                 pred_tokens = torch.argmax(model_output, dim=-1)
                 unique_preds = torch.unique(pred_tokens).numel()
                 unique_targets = torch.unique(x0).numel()
-                print(f"   Unique predicted tokens: {unique_preds}")
-                print(f"   Unique target tokens: {unique_targets}")
+                # print(f"   Unique predicted tokens: {unique_preds}")
+                # print(f"   Unique target tokens: {unique_targets}")
 
                 # Check if predictions are too confident
                 max_probs = torch.softmax(model_output, dim=-1).max(dim=-1)[0]
                 avg_confidence = max_probs.mean().item()
-                print(f"   Average prediction confidence: {avg_confidence:.4f}")
+                # print(f"   Average prediction confidence: {avg_confidence:.4f}")
+                pass
 
         return loss.item(), accuracy, perplexity, avg_sigma
     
@@ -856,7 +877,8 @@ class UniRef50Trainer:
             try:
                 dist.barrier(timeout=60)  # 1 minute timeout
             except Exception as e:
-                print(f"⚠️  Barrier timeout on rank {self.config.rank}: {e}")
+                # print(f"⚠️  Barrier timeout on rank {self.config.rank}: {e}")
+                pass
 
         batch_count = 0
         last_log_time = time.time()
@@ -868,7 +890,7 @@ class UniRef50Trainer:
 
                 # Log progress every 30 seconds to detect hangs
                 if current_time - last_log_time > 30:
-                    print(f"🔄 Rank {self.config.rank}: Processing batch {batch_count}, step {self.current_step}")
+                    # print(f"🔄 Rank {self.config.rank}: Processing batch {batch_count}, step {self.current_step}")
                     last_log_time = current_time
                 step_start_time = time.time()
 
@@ -876,7 +898,7 @@ class UniRef50Trainer:
                 try:
                     loss, accuracy, perplexity, avg_sigma = self.train_step(batch)
                 except Exception as e:
-                    print(f"❌ Training step failed on rank {self.config.rank}: {e}")
+                    # print(f"❌ Training step failed on rank {self.config.rank}: {e}")
                     # Skip this batch and continue
                     continue
 
@@ -892,11 +914,11 @@ class UniRef50Trainer:
                             nan_grad_params.append(name)
 
                     if nan_grad_params:
-                        print(f"🚨 NaN gradients detected at step {self.current_step}: {nan_grad_params}")
+                        # print(f"🚨 NaN gradients detected at step {self.current_step}: {nan_grad_params}")
                         # Zero out NaN gradients to prevent propagation
                         for name, param in self.model.named_parameters():
                             if param.grad is not None and torch.any(torch.isnan(param.grad)):
-                                print(f"   Zeroing NaN gradients in {name}")
+                                # print(f"   Zeroing NaN gradients in {name}")
                                 param.grad.data[torch.isnan(param.grad.data)] = 0.0
 
                     # Gradient clipping and optimization
@@ -979,19 +1001,21 @@ class UniRef50Trainer:
                             print(f"💥 Training stopped due to sampling failures: {e}")
                             raise  # Re-raise to stop training
                         else:
-                            print(f"⚠️  Unexpected error in sampling: {e}")
+                            # print(f"⚠️  Unexpected error in sampling: {e}")
                             # Continue training for other types of errors
+                            pass
 
                     # Save checkpoint periodically (only after actual optimization steps)
                     if self.accumulation_step == 0 and self.current_step % 5000 == 0:  # and is_main_process():
                         try:
                             self.save_training_checkpoint()
                         except Exception as e:
-                            print(f"⚠️  Failed to save checkpoint: {e}")
+                            # print(f"⚠️  Failed to save checkpoint: {e}")
+                            pass
 
         except Exception as e:
-            print(f"❌ Training epoch failed on rank {self.config.rank}: {e}")
-            print(f"   Processed {batch_count} batches before failure")
+            # print(f"❌ Training epoch failed on rank {self.config.rank}: {e}")
+            # print(f"   Processed {batch_count} batches before failure")
             # Add barrier to ensure all processes are aware of the failure
             if self.config.world_size > 1:
                 try:
@@ -1017,24 +1041,26 @@ class UniRef50Trainer:
         metrics['steps_per_second'] = self.current_step / elapsed_time
 
         # Debug: Check if we have wandb
-        print(f"🔍 Debug: wandb_run exists: {hasattr(self, 'wandb_run')}, is not None: {getattr(self, 'wandb_run', None) is not None}")
+        # print(f"🔍 Debug: wandb_run exists: {hasattr(self, 'wandb_run')}, is not None: {getattr(self, 'wandb_run', None) is not None}")
 
         # Log to wandb if available
         if hasattr(self, 'wandb_run') and self.wandb_run is not None:
-            print(f"🔍 Debug: Logging metrics to wandb at step {self.current_step}: {list(metrics.keys())}")
+            # print(f"🔍 Debug: Logging metrics to wandb at step {self.current_step}: {list(metrics.keys())}")
             log_metrics(metrics, self.current_step, wandb_run=self.wandb_run)
         else:
-            print(f"🔍 Debug: No wandb logging - wandb_run: {getattr(self, 'wandb_run', 'not set')}")
+            # print(f"🔍 Debug: No wandb logging - wandb_run: {getattr(self, 'wandb_run', 'not set')}")
+            pass
 
         # Print summary only occasionally to reduce noise
         if self.current_step % 100 == 0:
-            print(f"\n📊 Step {self.current_step} | "
-                  f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
-                  f"Acc: {metrics.get('accuracy', 0):.3f} | "
-                  f"PPL: {metrics.get('perplexity', 0):.2f} | "
-                  f"σ: {metrics.get('avg_sigma', 0):.3f} | "
-                  f"LR: {metrics.get('learning_rate', 0):.2e} | "
-                  f"Time: {format_time(elapsed_time)}")
+            # print(f"\n📊 Step {self.current_step} | "
+            #       f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
+            #       f"Acc: {metrics.get('accuracy', 0):.3f} | "
+            #       f"PPL: {metrics.get('perplexity', 0):.2f} | "
+            #       f"σ: {metrics.get('avg_sigma', 0):.3f} | "
+            #       f"LR: {metrics.get('learning_rate', 0):.2e} | "
+            #       f"Time: {format_time(elapsed_time)}")
+            pass
     
     def save_training_checkpoint(self):
         """Save training checkpoint."""
@@ -1058,7 +1084,7 @@ class UniRef50Trainer:
         # Setup wandb with timeout protection
         if self.config.use_wandb :##and is_main_process():
             try:
-                print("🔧 Setting up Wandb...")
+                # print("🔧 Setting up Wandb...")
                 import signal
 
                 def wandb_timeout_handler(signum, frame):
@@ -1078,18 +1104,18 @@ class UniRef50Trainer:
                 }
                 self.wandb_run = setup_wandb(wandb_project, wandb_name, config_dict)
                 signal.alarm(0)  # Cancel timeout
-                print("✅ Wandb setup successful")
+                # print("✅ Wandb setup successful")
 
             except (TimeoutError, Exception) as e:
                 signal.alarm(0)
-                print(f"⚠️  Wandb setup failed: {e}")
-                print("   Continuing without wandb logging")
+                # print(f"⚠️  Wandb setup failed: {e}")
+                # print("   Continuing without wandb logging")
                 self.wandb_run = None
         else:
             self.wandb_run = None
         
-        print(f"\n🚀 Starting training...")
-        print(f"📊 Total steps: {self.config.training.get('max_steps', 100000)}")
+        # print(f"\n🚀 Starting training...")
+        # print(f"📊 Total steps: {self.config.training.get('max_steps', 100000)}")
 
         try:
             # Training loop
@@ -1106,11 +1132,11 @@ class UniRef50Trainer:
                     # Set epoch for distributed sampler
                     if self.train_sampler is not None:
                         epoch = self.current_step // len(self.train_loader)
-                        print(f"🔍 Rank {self.config.rank}: Setting sampler epoch to {epoch}")
+                        # print(f"🔍 Rank {self.config.rank}: Setting sampler epoch to {epoch}")
                         self.train_sampler.set_epoch(epoch)
-                        print(f"🔍 Rank {self.config.rank}: Sampler epoch set, will see {len(self.train_sampler)} samples")
+                        # print(f"🔍 Rank {self.config.rank}: Sampler epoch set, will see {len(self.train_sampler)} samples")
 
-                    print(f"\n🚀 Rank {self.config.rank}: Starting epoch {epoch_count}, step {self.current_step}")
+                    # print(f"\n🚀 Rank {self.config.rank}: Starting epoch {epoch_count}, step {self.current_step}")
 
                     # Train epoch with timeout detection
                     epoch_metrics = self.train_epoch()
@@ -1119,7 +1145,8 @@ class UniRef50Trainer:
                     consecutive_failures = 0  # Reset failure counter on success
 
                     if is_main_process():
-                        print(f"\n✅ Epoch {epoch_count} completed in {epoch_time:.1f}s | Avg Loss: {epoch_metrics['loss']:.4f}")
+                        # print(f"\n✅ Epoch {epoch_count} completed in {epoch_time:.1f}s | Avg Loss: {epoch_metrics['loss']:.4f}")
+                        pass
 
                     # Check if we've reached max steps
                     if self.current_step >= max_steps:
@@ -1127,32 +1154,33 @@ class UniRef50Trainer:
 
                 except Exception as e:
                     consecutive_failures += 1
-                    print(f"❌ Epoch {epoch_count} failed on rank {self.config.rank}: {e}")
+                    # print(f"❌ Epoch {epoch_count} failed on rank {self.config.rank}: {e}")
 
                     if consecutive_failures >= max_consecutive_failures:
-                        print(f"💥 Too many consecutive failures ({consecutive_failures}), stopping training")
+                        # print(f"💥 Too many consecutive failures ({consecutive_failures}), stopping training")
                         break
                     else:
-                        print(f"🔄 Retrying... ({consecutive_failures}/{max_consecutive_failures} failures)")
+                        # print(f"🔄 Retrying... ({consecutive_failures}/{max_consecutive_failures} failures)")
                         time.sleep(5)  # Brief pause before retry
                         continue
             
             # Final checkpoint
             if is_main_process():
                 self.save_training_checkpoint()
-                print(f"\n🎉 Training completed! Final step: {self.current_step}")
-        
+                # print(f"\n🎉 Training completed! Final step: {self.current_step}")
+
         finally:
             # Cleanup with error handling
-            print(f"\n🧹 Cleaning up on rank {self.config.rank}...")
+            # print(f"\n🧹 Cleaning up on rank {self.config.rank}...")
 
             # Cleanup wandb
             if self.wandb_run is not None:
                 try:
                     self.wandb_run.finish()
-                    print("✅ Wandb cleanup completed")
+                    # print("✅ Wandb cleanup completed")
                 except Exception as e:
-                    print(f"⚠️  Wandb cleanup failed: {e}")
+                    # print(f"⚠️  Wandb cleanup failed: {e}")
+                    pass
 
             # Cleanup DDP
             if self.config.world_size > 1:
@@ -1160,17 +1188,19 @@ class UniRef50Trainer:
                     # Add barrier before cleanup to ensure all processes are ready
                     dist.barrier(timeout=30)
                     cleanup_ddp()
-                    print("✅ DDP cleanup completed")
+                    # print("✅ DDP cleanup completed")
                 except Exception as e:
-                    print(f"⚠️  DDP cleanup failed: {e}")
+                    # print(f"⚠️  DDP cleanup failed: {e}")
+                    pass
 
             # Cleanup temporary directory if we created it
             try:
                 cleanup_temp_directory()
             except Exception as e:
-                print(f"⚠️  Temp directory cleanup failed: {e}")
+                # print(f"⚠️  Temp directory cleanup failed: {e}")
+                pass
 
-            print(f"🏁 Cleanup completed on rank {self.config.rank}")
+            # print(f"🏁 Cleanup completed on rank {self.config.rank}")
 
 
 def parse_args():
@@ -1197,9 +1227,9 @@ def main():
     """Main training function."""
     args = parse_args()
     
-    print("\n" + "="*80)
-    print("🧬 CLEAN UNIREF50 DISCRETE DIFFUSION TRAINING")
-    print("="*80)
+    # print("\n" + "="*80)
+    # print("🧬 CLEAN UNIREF50 DISCRETE DIFFUSION TRAINING")
+    # print("="*80)
     
     try:
         # Setup DDP if specified
@@ -1227,13 +1257,13 @@ def main():
         trainer = UniRef50Trainer(trainer_config)
         trainer.train(args.wandb_project, args.wandb_name)
         
-        print("\n🎉 Training completed successfully!")
+        # print("\n🎉 Training completed successfully!")
         return 0
-        
+
     except Exception as e:
-        print(f"\n❌ Training failed: {e}")
+        # print(f"\n❌ Training failed: {e}")
         import traceback
-        traceback.print_exc()
+        # traceback.print_exc()
         return 1
 
 

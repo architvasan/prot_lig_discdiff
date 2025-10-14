@@ -17,10 +17,10 @@ def setup_temp_directory_if_needed():
                     os.environ['TMPDIR'] = temp_dir
                     os.environ['TEMP'] = temp_dir
                     os.environ['TMP'] = temp_dir
-                    print(f"🔧 DDP: Set temporary directory to: {temp_dir}")
+                    # print(f"🔧 DDP: Set temporary directory to: {temp_dir}")
                     return temp_dir
                 except Exception as e:
-                    print(f"⚠️  DDP: Failed to create temp dir in {tmp_dir}: {e}")
+                    # print(f"⚠️  DDP: Failed to create temp dir in {tmp_dir}: {e}")
                     continue
 
 # Optional MPI import for Aurora
@@ -30,7 +30,7 @@ try:
     MPI_AVAILABLE = True
 except ImportError:
     MPI_AVAILABLE = False
-    print("⚠️  MPI not available - DDP will be disabled")
+    # print("⚠️  MPI not available - DDP will be disabled")
 import os
 import socket
 import torch
@@ -84,7 +84,7 @@ def setup_ddp_aurora():
     device = f'xpu:{LOCAL_RANK}'
     torch.xpu.set_device(LOCAL_RANK)
 
-    print(f"✅ DDP initialized: rank {RANK}/{SIZE}, local_rank {LOCAL_RANK}, device {device}")
+    # print(f"✅ DDP initialized: rank {RANK}/{SIZE}, local_rank {LOCAL_RANK}, device {device}")
 
     return RANK, device, SIZE
 
@@ -130,7 +130,7 @@ def cleanup_ddp():
     """Clean up distributed training."""
     if dist.is_initialized():
         dist.destroy_process_group()
-        print("✅ DDP cleanup completed")
+        # print("✅ DDP cleanup completed")
 
 
 def is_main_process():

@@ -50,7 +50,7 @@ def device_compatible_bias_dropout_scale(x, bias, scale, residual, dropout_prob,
                 out = out.view(residual.shape)
             else:
                 # If shapes are incompatible, skip residual (this shouldn't happen in working model)
-                print(f"WARNING: Incompatible residual shapes {out.shape} vs {residual.shape}, skipping")
+                # print(f"WARNING: Incompatible residual shapes {out.shape} vs {residual.shape}, skipping")
                 return out
         out = out + residual
     return out
@@ -408,7 +408,7 @@ class TransformerBlock(nn.Module):
         # Ensure qkv has the correct shape [batch, seq, 3*dim]
         expected_qkv_shape = (batch_size, seq_len, 3 * self.dim)
         if qkv.shape != expected_qkv_shape:
-            print(f"WARNING: qkv shape {qkv.shape} != expected {expected_qkv_shape}")
+            # print(f"WARNING: qkv shape {qkv.shape} != expected {expected_qkv_shape}")
             # Force reshape to expected shape
             qkv = qkv.view(expected_qkv_shape)
             print(f"Fixed qkv shape to: {qkv.shape}")
@@ -572,7 +572,8 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
             print(f"🚨 NaN weights detected after initialization: {nan_params}")
             raise RuntimeError(f"Model has NaN weights after initialization: {nan_params}")
         else:
-            print("✅ Model weights initialized successfully (no NaN values)")
+            # print("✅ Model weights initialized successfully (no NaN values)")
+            pass
 
     def _subs_parameterization(self, logits, xt):
         """SUBS parameterization for MDLM loss"""
@@ -609,7 +610,7 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
     def forward(self, indices, sigma, use_subs=False):
         # Ensure indices is 2D: [batch_size, sequence_length]
         if indices.dim() != 2:
-            print(f"WARNING: Model received {indices.dim()}D indices with shape {indices.shape}")
+            # print(f"WARNING: Model received {indices.dim()}D indices with shape {indices.shape}")
             if indices.dim() > 2:
                 indices = indices.view(indices.shape[0], -1)
                 print(f"Reshaped indices to: {indices.shape}")
@@ -620,7 +621,7 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
 
         # Simple shape validation without aggressive fixing
         if x.dim() != 3:
-            print(f"WARNING: vocab_embed output has unexpected shape {x.shape}, expected 3D")
+            # print(f"WARNING: vocab_embed output has unexpected shape {x.shape}, expected 3D")
             # Only fix if it's a simple case
             if x.dim() == 2:
                 x = x.unsqueeze(1)  # Add sequence dimension
@@ -637,7 +638,7 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
         use_mixed_precision = getattr(self.config, 'training', {}).get('use_mixed_precision', False)
 
         if use_mixed_precision and device_type == 'cuda':
-            print(f"🔍 Debug: Running model on {device_type} with mixed precision (bfloat16)")
+            # print(f"🔍 Debug: Running model on {device_type} with mixed precision (bfloat16)")
             with torch.cuda.amp.autocast(dtype=torch.bfloat16):
                 for i in range(len(self.blocks)):
                     x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
@@ -645,7 +646,8 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
         else:
             # Run without autocast for numerical stability (recommended for discrete diffusion)
             if not use_mixed_precision:
-                print(f"🔍 Debug: Running model on {device_type} without mixed precision for stability")
+                # print(f"🔍 Debug: Running model on {device_type} without mixed precision for stability")
+                pass
 
             for i in range(len(self.blocks)):
                 x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
@@ -690,8 +692,9 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
                      zeros = torch.zeros_like(x[..., :1])  # [batch, seq, 1]
                      x = torch.scatter(x, -1, indices_expanded, zeros)
                  else:
-                     print(f"WARNING: Skipping absorbing state scatter due to shape mismatch:")
-                     print(f"  x shape: {x.shape}, indices shape: {indices.shape}")
+                     # print(f"WARNING: Skipping absorbing state scatter due to shape mismatch:")
+                     # print(f"  x shape: {x.shape}, indices shape: {indices.shape}")
+                     pass
                      # Try to fix the shape if possible
                      if x.numel() == indices.shape[0] * indices.shape[1] * x.shape[-1]:
                          x = x.view(indices.shape[0], indices.shape[1], -1)

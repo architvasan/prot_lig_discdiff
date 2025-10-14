@@ -44,14 +44,15 @@ class ProteinTokenizer:
                     mask_token="<mask>"
                 )
                 self.use_gpt2_tokenizer = True
-                print("✅ Using GPT2 tokenizer")
+                # print("✅ Using GPT2 tokenizer")
             except Exception as e:
-                print(f"⚠️  Failed to load GPT2 tokenizer: {e}")
-                print("🔄 Falling back to amino acid tokenizer")
+                # print(f"⚠️  Failed to load GPT2 tokenizer: {e}")
+                # print("🔄 Falling back to amino acid tokenizer")
+                pass
                 self.use_gpt2_tokenizer = False
         else:
             self.use_gpt2_tokenizer = False
-            print("✅ Using amino acid tokenizer")
+            # print("✅ Using amino acid tokenizer")
 
     def encode(self, sequence, max_length=512, add_special_tokens=True):
         """Encode a protein sequence to token IDs."""
@@ -136,7 +137,7 @@ class UniRef50Dataset(Dataset):
 
     def _load_data(self):
         """Load all data into memory."""
-        print(f"📂 Loading data from {self.data_file}")
+        # print(f"📂 Loading data from {self.data_file}")
         
         if self.data_file.endswith('.json'):
             with open(self.data_file, 'r') as f:
@@ -150,20 +151,21 @@ class UniRef50Dataset(Dataset):
             # PyTorch file - load with progress for large files
             import os
             file_size_mb = os.path.getsize(self.data_file) / (1024 * 1024)
-            print(f"📊 File size: {file_size_mb:.1f} MB")
+            # print(f"📊 File size: {file_size_mb:.1f} MB")
 
             if file_size_mb > 100:  # Large file
-                print("⚠️  Large file detected, this may take a while...")
+                # print("⚠️  Large file detected, this may take a while...")
+                pass
 
             self.data = torch.load(self.data_file, map_location='cpu')
         else:
             raise ValueError(f"Unsupported file format: {self.data_file}")
 
-        print(f"✅ Loaded {len(self.data)} sequences")
+        # print(f"✅ Loaded {len(self.data)} sequences")
 
         # Debug: Check first few items to see if they're all the same
         if len(self.data) > 0:
-            print(f"🔍 Data sample check:")
+            # print(f"🔍 Data sample check:")
             for i in range(min(3, len(self.data))):
                 item = self.data[i]
                 if isinstance(item, torch.Tensor):
@@ -172,19 +174,20 @@ class UniRef50Dataset(Dataset):
                 else:
                     item_preview = str(item)[:50]
                     item_hash = hash(str(item))
-                print(f"   Index {i}: hash={item_hash}, preview={item_preview}")
+                # print(f"   Index {i}: hash={item_hash}, preview={item_preview}")
 
                 if i > 0 and item_hash == prev_hash:
-                    print(f"🚨 DATA FILE BUG: All items in data file are identical!")
+                    # print(f"🚨 DATA FILE BUG: All items in data file are identical!")
+                    pass
                 prev_hash = item_hash
 
     def _setup_streaming(self):
         """Setup for streaming data loading."""
-        print(f"🌊 Setting up streaming from {self.data_file}")
+        # print(f"🌊 Setting up streaming from {self.data_file}")
 
         # Check if it's a .pt file (binary) or text file
         if self.data_file.endswith('.pt'):
-            print("⚠️  .pt files don't support streaming, loading into memory instead")
+            # print("⚠️  .pt files don't support streaming, loading into memory instead")
             self._load_data()
             return
 
@@ -192,9 +195,9 @@ class UniRef50Dataset(Dataset):
         try:
             with open(self.data_file, 'r', encoding='utf-8') as f:
                 self.length = sum(1 for _ in f)
-            print(f"✅ Streaming setup complete, estimated {self.length} sequences")
+            # print(f"✅ Streaming setup complete, estimated {self.length} sequences")
         except UnicodeDecodeError:
-            print("⚠️  File encoding issue, falling back to memory loading")
+            # print("⚠️  File encoding issue, falling back to memory loading")
             self._load_data()
 
     def __len__(self):
@@ -216,10 +219,11 @@ class UniRef50Dataset(Dataset):
             if hasattr(self, '_debug_indices'):
                 self._debug_indices.append(idx)
                 if len(self._debug_indices) <= 5:
-                    print(f"🔍 Dataset accessing index {idx}, data length: {len(self.data)}")
+                    # print(f"🔍 Dataset accessing index {idx}, data length: {len(self.data)}")
+                    pass
             else:
                 self._debug_indices = [idx]
-                print(f"🔍 Dataset first access - index {idx}, data length: {len(self.data)}")
+                # print(f"🔍 Dataset first access - index {idx}, data length: {len(self.data)}")
 
             item = self.data[idx]
             
