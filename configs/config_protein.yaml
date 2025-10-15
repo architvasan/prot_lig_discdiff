@@ -17,7 +17,7 @@ model:
 # Training configuration - optimized for stability
 training:
   batch_size: 8             # Mini-batch size (adjust based on memory)
-  learning_rate: 1.0e-4        # Learning rate (reduced for numerical stability)
+  learning_rate: 1.0e-5        # Learning rate (reduced for numerical stability)
   weight_decay: 0.01         # Weight decay for regularization
   warmup_steps: 2000         # Warmup steps (longer for stability)
   max_steps: 50000           # Total training steps
