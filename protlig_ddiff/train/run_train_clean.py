@@ -242,6 +242,7 @@ class UniRef50Trainer:
     def __init__(self, config: TrainerConfig):
         self.config = config
         self.setup_environment()
+        self.setup_validation_tracking()
         self.setup_model_and_data()
         self.setup_training_components()
         
@@ -288,6 +289,24 @@ class UniRef50Trainer:
                 torch.xpu.set_device(self.device)
             except Exception as e:
                 print(f"⚠️  Could not set XPU device {self.device}: {e}")
+
+    def setup_validation_tracking(self):
+        """Initialize validation tracking variables."""
+        # Initialize validation tracking
+        self.best_val_loss = float('inf')
+        self.val_loss_history = []
+        self.steps_without_improvement = 0
+        self.last_checkpoint_step = 0
+
+        # Get validation config with defaults
+        val_config = getattr(self.config, 'validation', {})
+        self.val_eval_freq = getattr(val_config, 'eval_freq', 500)
+        self.checkpoint_freq = getattr(val_config, 'checkpoint_freq', 1000)
+        self.checkpoint_on_improvement = getattr(val_config, 'checkpoint_on_improvement', True)
+        self.patience = getattr(val_config, 'patience', 10)
+        self.min_delta = getattr(val_config, 'min_delta', 0.001)
+        self.save_best_only = getattr(val_config, 'save_best_only', False)
+        self.val_batch_limit = getattr(val_config, 'val_batch_limit', 20)
                 # Don't fail, just continue
         
     def setup_model_and_data(self):
@@ -505,7 +524,26 @@ class UniRef50Trainer:
                     continue
                 else:
                     raise
-        
+
+        # Create validation loader (use same dataset but different sampling)
+        # For validation, we'll use a subset of the training data
+        val_batch_size = min(self.config.training.get('batch_size', 32), 16)  # Smaller batches for validation
+
+        # Create validation sampler that takes every Nth sample
+        val_indices = list(range(0, len(train_dataset), max(1, len(train_dataset) // 1000)))  # ~1000 validation samples
+        val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
+
+        self.val_loader = DataLoader(
+            train_dataset,
+            batch_size=val_batch_size,
+            sampler=val_sampler,
+            num_workers=0,  # Use 0 workers for validation to avoid issues
+            pin_memory=False,
+            drop_last=False
+        )
+
+        # print(f"🔧 Validation loader: {len(self.val_loader)} batches, {len(val_indices)} samples")
+
         self.train_sampler = train_sampler
     
     def setup_training_components(self):
@@ -546,6 +584,10 @@ class UniRef50Trainer:
         self.sampling_failure_count = 0
         self.max_sampling_failures = self.config.training.get('max_sampling_failures', 3)
         self.stop_on_sampling_failure = self.config.training.get('stop_on_sampling_failure', True)
+
+        # Load checkpoint if specified
+        if self.config.resume_checkpoint is not None:
+            self.load_training_checkpoint(self.config.resume_checkpoint)
 
         # Setup sampling output file
         self.setup_sampling_output()
@@ -1021,13 +1063,50 @@ class UniRef50Trainer:
                             # Continue training for other types of errors
                             pass
 
-                    # Save checkpoint periodically (only after actual optimization steps)
-                    if self.accumulation_step == 0 and self.current_step % 5000 == 0:  # and is_main_process():
-                        try:
-                            self.save_training_checkpoint()
-                        except Exception as e:
-                            # print(f"⚠️  Failed to save checkpoint: {e}")
-                            pass
+                # SUBS Validation every 500 steps (or configured frequency)
+                current_val_loss = None
+                if self.current_step % self.val_eval_freq == 0 and self.current_step > 0:
+                    try:
+                        print(f"\n🔍 Running SUBS validation at step {self.current_step}...")
+                        current_val_loss, val_metrics = self.validate_model_subs()
+
+                        # Update validation tracking
+                        improved = self.update_validation_tracking(current_val_loss)
+
+                        # Log validation metrics to wandb
+                        if hasattr(self, 'wandb_run') and self.wandb_run is not None:
+                            val_log_dict = {
+                                'validation/loss': current_val_loss,
+                                'validation/best_loss': self.best_val_loss,
+                                'validation/steps_without_improvement': self.steps_without_improvement,
+                                **val_metrics
+                            }
+                            self.wandb_run.log(val_log_dict, step=self.current_step)
+
+                        # Check for early stopping
+                        if self.steps_without_improvement >= self.patience:
+                            print(f"🛑 Early stopping triggered after {self.patience} evaluations without improvement")
+                            return epoch_metrics.get_averages()  # Exit training loop
+
+                    except Exception as e:
+                        print(f"⚠️  Validation failed at step {self.current_step}: {e}")
+                        current_val_loss = None
+
+                # Checkpointing every 1000 steps (or when validation improves)
+                if (self.accumulation_step == 0 and
+                    (self.current_step % self.checkpoint_freq == 0 or
+                     (current_val_loss is not None and self.should_save_checkpoint(self.current_step, current_val_loss)))):
+
+                    is_best = current_val_loss is not None and current_val_loss <= self.best_val_loss
+
+                    try:
+                        self.save_training_checkpoint(
+                            val_loss=current_val_loss,
+                            is_best=is_best
+                        )
+                    except Exception as e:
+                        print(f"⚠️  Failed to save checkpoint: {e}")
+                        pass
 
         except Exception as e:
             # print(f"❌ Training epoch failed on rank {self.config.rank}: {e}")
@@ -1078,22 +1157,182 @@ class UniRef50Trainer:
             #       f"Time: {format_time(elapsed_time)}")
             pass
     
-    def save_training_checkpoint(self):
-        """Save training checkpoint."""
+    def validate_model_subs(self):
+        """Run validation using SUBS loss on validation set."""
+        print(f"🔍 Running SUBS validation...")
+
+        self.model.eval()
+        val_losses = []
+        val_metrics = []
+
+        with torch.no_grad():
+            for i, batch in enumerate(self.val_loader):
+                if i >= self.val_batch_limit:  # Limit validation batches for speed
+                    break
+
+                batch = batch.to(self.device)
+
+                # Ensure batch is 2D: [batch_size, sequence_length]
+                if batch.dim() != 2:
+                    if batch.dim() > 2:
+                        batch = batch.view(batch.shape[0], -1)
+                    else:
+                        print(f"⚠️  Skipping invalid batch with shape {batch.shape}")
+                        continue
+
+                try:
+                    # Sample random timestep for each sequence in batch
+                    t = torch.rand(batch.shape[0], device=self.device)
+                    sigma, dsigma = self.noise(t)
+
+                    # Add noise to create perturbed batch
+                    perturbed_batch = self.graph.sample_transition(batch, sigma)
+
+                    # Forward pass with SUBS parameterization
+                    model_output = self.model(perturbed_batch, sigma, use_subs=True)
+
+                    # Compute SUBS loss
+                    from protlig_ddiff.processing.subs_loss import subs_loss, compute_subs_metrics
+                    loss = subs_loss(model_output, batch, sigma, self.noise)
+                    val_losses.append(loss.item())
+
+                    # Compute additional metrics
+                    metrics = compute_subs_metrics(model_output, batch, sigma)
+                    val_metrics.append(metrics)
+
+                except Exception as e:
+                    print(f"⚠️  Error in validation batch {i}: {e}")
+                    continue
+
+        if not val_losses:
+            print("❌ No valid validation batches processed!")
+            return float('inf'), {}
+
+        # Aggregate results
+        avg_val_loss = np.mean(val_losses)
+
+        # Aggregate metrics
+        aggregated_metrics = {}
+        if val_metrics:
+            for key in val_metrics[0].keys():
+                values = [m[key] for m in val_metrics if key in m]
+                if values:
+                    aggregated_metrics[f'val_{key}'] = np.mean(values)
+
+        print(f"✅ Validation completed: {len(val_losses)} batches, avg loss: {avg_val_loss:.4f}")
+
+        return avg_val_loss, aggregated_metrics
+
+    def should_save_checkpoint(self, step, val_loss=None):
+        """Determine if we should save a checkpoint based on validation improvement."""
+        # Always save at checkpoint frequency if not using improvement-based saving
+        if not self.checkpoint_on_improvement:
+            return step % self.checkpoint_freq == 0
+
+        # If no validation loss provided, don't save
+        if val_loss is None:
+            return False
+
+        # Check if this is an improvement
+        improvement = (self.best_val_loss - val_loss) > self.min_delta
+
+        # Save if it's an improvement or if we haven't saved in a while
+        time_to_save = (step - self.last_checkpoint_step) >= self.checkpoint_freq
+
+        return improvement or time_to_save
+
+    def update_validation_tracking(self, val_loss):
+        """Update validation loss tracking and early stopping."""
+        self.val_loss_history.append(val_loss)
+
+        # Check for improvement
+        if (self.best_val_loss - val_loss) > self.min_delta:
+            print(f"🎉 Validation improved: {self.best_val_loss:.4f} → {val_loss:.4f}")
+            self.best_val_loss = val_loss
+            self.steps_without_improvement = 0
+            return True  # Improvement detected
+        else:
+            self.steps_without_improvement += 1
+            print(f"📊 No improvement for {self.steps_without_improvement} evaluations (best: {self.best_val_loss:.4f})")
+            return False  # No improvement
+
+    def save_training_checkpoint(self, val_loss=None, is_best=False, force_save=False):
+        """Save training checkpoint with validation information."""
+        # Check if we should save this checkpoint
+        if not force_save and not self.should_save_checkpoint(self.current_step, val_loss):
+            return
+
         checkpoint_dir = Path(self.config.work_dir) / "checkpoints"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        
+
         checkpoint_path = checkpoint_dir / f"checkpoint_step_{self.current_step}.pt"
-        
-        save_checkpoint(
-            model=self.model.module if hasattr(self.model, 'module') else self.model,
-            optimizer=self.optimizer,
-            scheduler=self.scheduler,
-            ema_model=self.ema_model,
-            step=self.current_step,
-            loss=self.metrics.losses[-1] if self.metrics.losses else float('inf'),
-            save_path=checkpoint_path
-        )
+
+        # Enhanced checkpoint with validation info
+        checkpoint = {
+            'step': self.current_step,
+            'best_loss': self.best_val_loss if val_loss is not None else float('inf'),
+            'val_loss': val_loss,
+            'val_loss_history': self.val_loss_history,
+            'steps_without_improvement': self.steps_without_improvement,
+            'model_state_dict': (self.model.module if hasattr(self.model, 'module') else self.model).state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'loss': self.metrics.losses[-1] if self.metrics.losses else float('inf'),
+        }
+
+        if self.ema_model is not None:
+            checkpoint['ema_state_dict'] = self.ema_model.state_dict()
+
+        torch.save(checkpoint, checkpoint_path)
+        self.last_checkpoint_step = self.current_step
+
+        if is_best:
+            best_path = checkpoint_dir / 'best_checkpoint.pt'
+            torch.save(checkpoint, best_path)
+            print(f"🏆 Best checkpoint saved: {best_path}")
+
+        print(f"💾 Checkpoint saved: {checkpoint_path}")
+        if val_loss is not None:
+            print(f"   📊 Validation loss: {val_loss:.4f} (best: {self.best_val_loss:.4f})")
+
+    def load_training_checkpoint(self, checkpoint_path):
+        """Load training checkpoint and restore validation state."""
+        print(f"📂 Loading checkpoint from: {checkpoint_path}")
+
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+            # Load model state
+            if hasattr(self.model, 'module'):
+                self.model.module.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+
+            # Load optimizer and scheduler state
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+            # Load EMA if available
+            if 'ema_state_dict' in checkpoint and self.ema_model is not None:
+                self.ema_model.load_state_dict(checkpoint['ema_state_dict'])
+
+            # Load training state
+            self.current_step = checkpoint.get('step', 0)
+
+            # Load validation tracking state
+            self.best_val_loss = checkpoint.get('val_loss', checkpoint.get('best_loss', float('inf')))
+            self.val_loss_history = checkpoint.get('val_loss_history', [])
+            self.steps_without_improvement = checkpoint.get('steps_without_improvement', 0)
+
+            print(f"✅ Checkpoint loaded successfully!")
+            print(f"   📊 Restored step: {self.current_step}")
+            print(f"   📊 Best validation loss: {self.best_val_loss:.4f}")
+            print(f"   📊 Validation history length: {len(self.val_loss_history)}")
+            print(f"   📊 Steps without improvement: {self.steps_without_improvement}")
+
+        except Exception as e:
+            print(f"❌ Failed to load checkpoint: {e}")
+            raise
     
     def train(self, wandb_project=None, wandb_name=None):
         """Main training loop."""

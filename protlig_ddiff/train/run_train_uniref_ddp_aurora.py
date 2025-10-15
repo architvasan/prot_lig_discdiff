@@ -497,6 +497,22 @@ class OptimizedUniRef50Trainer:
 
         print(f"Config loaded from: {self.config_file}")
 
+        # Initialize validation tracking
+        self.best_val_loss = float('inf')
+        self.val_loss_history = []
+        self.steps_without_improvement = 0
+        self.last_checkpoint_step = 0
+
+        # Get validation config with defaults
+        val_config = getattr(self.cfg, 'validation', {})
+        self.val_eval_freq = getattr(val_config, 'eval_freq', 500)
+        self.checkpoint_freq = getattr(val_config, 'checkpoint_freq', 1000)
+        self.checkpoint_on_improvement = getattr(val_config, 'checkpoint_on_improvement', True)
+        self.patience = getattr(val_config, 'patience', 10)
+        self.min_delta = getattr(val_config, 'min_delta', 0.001)
+        self.save_best_only = getattr(val_config, 'save_best_only', False)
+        self.val_batch_limit = getattr(val_config, 'val_batch_limit', 20)
+
         # Setup logging
         self.setup_logging()
 
@@ -2445,6 +2461,73 @@ class OptimizedUniRef50Trainer:
             print(f"Warning: Could not compute fixed noise level evaluation: {e}")
             return {}
 
+    def validate_model_subs(self):
+        """Run validation using SUBS loss on validation set."""
+        print(f"🔍 Running SUBS validation...")
+
+        self.model.eval()
+        val_losses = []
+        val_metrics = []
+
+        with torch.no_grad():
+            for i, batch in enumerate(self.val_loader):
+                if i >= self.val_batch_limit:  # Limit validation batches for speed
+                    break
+
+                batch = batch.to(self.device)
+
+                # Ensure batch is 2D: [batch_size, sequence_length]
+                if batch.dim() != 2:
+                    if batch.dim() > 2:
+                        batch = batch.view(batch.shape[0], -1)
+                    else:
+                        print(f"⚠️  Skipping invalid batch with shape {batch.shape}")
+                        continue
+
+                try:
+                    # Sample random timestep for each sequence in batch
+                    t = torch.rand(batch.shape[0], device=self.device)
+                    sigma, dsigma = self.noise(t)
+
+                    # Add noise to create perturbed batch
+                    perturbed_batch = self.graph.sample_transition(batch, sigma)
+
+                    # Forward pass with SUBS parameterization
+                    model_to_use = self.model_ddp if self.use_ddp else self.model
+                    model_output = model_to_use(perturbed_batch, sigma, use_subs=True)
+
+                    # Compute SUBS loss
+                    from protlig_ddiff.processing.subs_loss import subs_loss, compute_subs_metrics
+                    loss = subs_loss(model_output, batch, sigma, self.noise)
+                    val_losses.append(loss.item())
+
+                    # Compute additional metrics
+                    metrics = compute_subs_metrics(model_output, batch, sigma)
+                    val_metrics.append(metrics)
+
+                except Exception as e:
+                    print(f"⚠️  Error in validation batch {i}: {e}")
+                    continue
+
+        if not val_losses:
+            print("❌ No valid validation batches processed!")
+            return float('inf'), {}
+
+        # Aggregate results
+        avg_val_loss = np.mean(val_losses)
+
+        # Aggregate metrics
+        aggregated_metrics = {}
+        if val_metrics:
+            for key in val_metrics[0].keys():
+                values = [m[key] for m in val_metrics if key in m]
+                if values:
+                    aggregated_metrics[f'val_{key}'] = np.mean(values)
+
+        print(f"✅ Validation completed: {len(val_losses)} batches, avg loss: {avg_val_loss:.4f}")
+
+        return avg_val_loss, aggregated_metrics
+
     def validate_model(self):
         """Run validation and return metrics including reconstruction and fixed noise losses."""
         self.model.eval()
@@ -2507,10 +2590,47 @@ class OptimizedUniRef50Trainer:
 
         return avg_val_loss, avg_recon_loss, avg_fixed_noise
     
-    def save_checkpoint(self, step, epoch=0, best_loss=float('inf'), is_best=False):
+    def should_save_checkpoint(self, step, val_loss=None):
+        """Determine if we should save a checkpoint based on validation improvement."""
+        # Always save at checkpoint frequency if not using improvement-based saving
+        if not self.checkpoint_on_improvement:
+            return step % self.checkpoint_freq == 0
+
+        # If no validation loss provided, don't save
+        if val_loss is None:
+            return False
+
+        # Check if this is an improvement
+        improvement = (self.best_val_loss - val_loss) > self.min_delta
+
+        # Save if it's an improvement or if we haven't saved in a while
+        time_to_save = (step - self.last_checkpoint_step) >= self.checkpoint_freq
+
+        return improvement or time_to_save
+
+    def update_validation_tracking(self, val_loss):
+        """Update validation loss tracking and early stopping."""
+        self.val_loss_history.append(val_loss)
+
+        # Check for improvement
+        if (self.best_val_loss - val_loss) > self.min_delta:
+            print(f"🎉 Validation improved: {self.best_val_loss:.4f} → {val_loss:.4f}")
+            self.best_val_loss = val_loss
+            self.steps_without_improvement = 0
+            return True  # Improvement detected
+        else:
+            self.steps_without_improvement += 1
+            print(f"📊 No improvement for {self.steps_without_improvement} evaluations (best: {self.best_val_loss:.4f})")
+            return False  # No improvement
+
+    def save_checkpoint(self, step, epoch=0, val_loss=None, is_best=False, force_save=False):
         """Save training checkpoint - only on rank 0 for DDP."""
         # Only save checkpoints on rank 0 to avoid conflicts
         if self.use_ddp and self.rank != 0:
+            return
+
+        # Check if we should save this checkpoint
+        if not force_save and not self.should_save_checkpoint(step, val_loss):
             return
 
         # Get the actual model state (unwrap DDP if needed)
@@ -2522,7 +2642,10 @@ class OptimizedUniRef50Trainer:
         checkpoint = {
             'step': step,
             'epoch': epoch,
-            'best_loss': best_loss,
+            'best_loss': self.best_val_loss if val_loss is not None else float('inf'),
+            'val_loss': val_loss,
+            'val_loss_history': self.val_loss_history,
+            'steps_without_improvement': self.steps_without_improvement,
             'model_state_dict': model_state,
             'ema_state_dict': self.ema.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -2536,12 +2659,16 @@ class OptimizedUniRef50Trainer:
 
         checkpoint_path = os.path.join(self.checkpoint_dir, f'checkpoint_step_{step}.pth')
         torch.save(checkpoint, checkpoint_path)
+        self.last_checkpoint_step = step
 
         if is_best:
             best_path = os.path.join(self.checkpoint_dir, 'best_checkpoint.pth')
             torch.save(checkpoint, best_path)
+            print(f"🏆 Best checkpoint saved: {best_path}")
 
         print(f"💾 Checkpoint saved (rank {self.rank}): {checkpoint_path}")
+        if val_loss is not None:
+            print(f"   📊 Validation loss: {val_loss:.4f} (best: {self.best_val_loss:.4f})")
 
     def cleanup_ddp(self):
         """Clean up DDP process group safely."""
@@ -2610,6 +2737,16 @@ class OptimizedUniRef50Trainer:
                 checkpoint_step = checkpoint.get('step', 0)
                 start_epoch = checkpoint.get('epoch', 0)
                 best_loss = checkpoint.get('best_loss', float('inf'))
+
+                # Load validation tracking state
+                self.best_val_loss = checkpoint.get('val_loss', checkpoint.get('best_loss', float('inf')))
+                self.val_loss_history = checkpoint.get('val_loss_history', [])
+                self.steps_without_improvement = checkpoint.get('steps_without_improvement', 0)
+
+                print(f"📊 Restored validation state:")
+                print(f"   Best validation loss: {self.best_val_loss:.4f}")
+                print(f"   Validation history length: {len(self.val_loss_history)}")
+                print(f"   Steps without improvement: {self.steps_without_improvement}")
 
                 # Override step if start_step is specified
                 if self.start_step is not None:
@@ -2815,39 +2952,57 @@ class OptimizedUniRef50Trainer:
                 if step % quick_gen_freq == 0 and step > 0:
                     self.quick_generation_test(step, epoch)
 
-                # Comprehensive evaluation (skip in minimal mode)
-                if not self.minimal_mode and step % self.cfg.training.eval_freq == 0:
-                    val_loss, generation_properties = self.comprehensive_evaluation(
+                # SUBS Validation every 500 steps (or configured frequency)
+                current_val_loss = None
+                if step % self.val_eval_freq == 0 and step > 0:
+                    print(f"\n🔍 Running SUBS validation at step {step}...")
+                    current_val_loss, val_metrics = self.validate_model_subs()
+
+                    # Update validation tracking
+                    improved = self.update_validation_tracking(current_val_loss)
+
+                    # Log validation metrics
+                    self.log_to_wandb({
+                        'validation/loss': current_val_loss,
+                        'validation/best_loss': self.best_val_loss,
+                        'validation/steps_without_improvement': self.steps_without_improvement,
+                        **val_metrics
+                    }, step=step)
+
+                    # Check for early stopping
+                    if self.steps_without_improvement >= self.patience:
+                        print(f"🛑 Early stopping triggered after {self.patience} evaluations without improvement")
+                        print(f"   Best validation loss: {self.best_val_loss:.4f}")
+                        break
+
+                # Comprehensive evaluation (skip in minimal mode, less frequent)
+                if not self.minimal_mode and step % (self.val_eval_freq * 4) == 0 and step > 0:
+                    print(f"\n🎯 Running comprehensive evaluation at step {step}...")
+                    comp_val_loss, generation_properties = self.comprehensive_evaluation(
                         step, epoch, num_samples=10, sampling_method=self.sampling_method
                     )
+                    print(f"✅ Comprehensive evaluation completed. Val loss: {comp_val_loss:.4f}")
 
-                    # Update best loss tracking
-                    if val_loss < best_loss:
-                        best_loss = val_loss
-                        print(f"🎉 New best validation loss: {val_loss:.4f}")
+                # Checkpointing every 1000 steps (or when validation improves)
+                if step % self.checkpoint_freq == 0 or (current_val_loss is not None and self.should_save_checkpoint(step, current_val_loss)):
+                    is_best = current_val_loss is not None and current_val_loss <= self.best_val_loss
 
-                    print(f"✅ Evaluation completed. Val loss: {val_loss:.4f}")
-
-                # Checkpointing
-                if step % self.cfg.training.snapshot_freq == 0:
-                    avg_epoch_loss = epoch_loss / num_batches
-                    is_best = avg_epoch_loss < best_loss
-
-                    if is_best:
-                        best_loss = avg_epoch_loss
-                        print(f"🎉 New best loss: {best_loss:.4f}")
-
-                    if self.rank==0:
-                        self.save_checkpoint(step, epoch, best_loss, is_best)
+                    if self.rank == 0:
+                        self.save_checkpoint(
+                            step=step,
+                            epoch=epoch,
+                            val_loss=current_val_loss,
+                            is_best=is_best
+                        )
 
                     # Log checkpoint info
-                    if False:
-                        self.log_to_wandb({
-                            'checkpoint/step': step,
-                            'checkpoint/best_loss': best_loss,
-                            'checkpoint/current_loss': avg_epoch_loss,
-                            'checkpoint/is_best': is_best
-                        }, step=step)
+                    self.log_to_wandb({
+                        'checkpoint/step': step,
+                        'checkpoint/best_val_loss': self.best_val_loss,
+                        'checkpoint/current_val_loss': current_val_loss or float('inf'),
+                        'checkpoint/is_best': is_best,
+                        'checkpoint/steps_without_improvement': self.steps_without_improvement
+                    }, step=step)
 
                 # Early stopping check
                 if step >= self.cfg.training.n_iters:
