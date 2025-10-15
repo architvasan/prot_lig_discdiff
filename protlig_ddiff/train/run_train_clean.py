@@ -1236,6 +1236,7 @@ def main():
         # Setup DDP if specified
         rank, world_size, device = 0, 1, args.device
         
+        print(f"{args.cluster}")
         if args.cluster == "aurora":
             rank, device, world_size = setup_ddp_aurora()
         elif args.cluster == "polaris":

@@ -72,21 +72,31 @@ def setup_ddp_aurora():
 
     print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
 
+    ## Set XPU device
+    #device = f'xpu:{LOCAL_RANK}'
+    #print(device)
+    #torch.xpu.set_device(LOCAL_RANK)
+
     # Initialize distributed communication with CCL backend for Intel XPU
     torch.distributed.init_process_group(
-        backend='ccl',
+        backend='xpu:ccl',
         init_method='env://',
         rank=int(RANK),
         world_size=int(SIZE)
     )
 
-    # Set XPU device
-    device = f'xpu:{LOCAL_RANK}'
-    torch.xpu.set_device(LOCAL_RANK)
+    # Set CUDA device
+    rank = dist.get_rank()
+    device_id = rank % torch.cuda.device_count()
+    torch.cuda.set_device(device_id)
+    
+    return dist.get_rank(), device_id, dist.get_world_size()
+
+
 
     # print(f"✅ DDP initialized: rank {RANK}/{SIZE}, local_rank {LOCAL_RANK}, device {device}")
 
-    return RANK, device, SIZE
+    #return RANK, device, SIZE
 
 
 def setup_ddp_polaris(rank, world_size):
