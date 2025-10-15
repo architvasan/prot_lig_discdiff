@@ -59,7 +59,7 @@ PPN="${HARDCODED_PPN:-4}"
 TIME_LIMIT="${HARDCODED_TIME_LIMIT:-2}"
 QUEUE="${HARDCODED_QUEUE:-workq}"
 ACCOUNT="${HARDCODED_ACCOUNT:-}"
-DEVICE="${HARDCODED_DEVICE:-cuda:0}"
+DEVICE="${HARDCODED_DEVICE:-xpu:0}"
 CLUSTER="${HARDCODED_CLUSTER:-aurora}"
 SEED="${HARDCODED_SEED:-42}"
 
@@ -319,18 +319,14 @@ main() {
         
     else
         # Interactive run (for testing)
-        echo "🔧 Loading Polaris modules..."
-        #module use /soft/modulefiles 2>/dev/null || true
-        module load frameworks
-        #module load conda/2025-09-25 2>/dev/null || true
-        #conda activate
-        source /flare/FoundEpidem/avasan/envs/ideal_2025/bin/activate
-        #source ../protein_lig_sedd/pldd_venv/bin/activate 
+        echo "🔧 Loading Aurora modules..."
+        module load frameworks/2025.0.0
+        source /flare/FoundEpidem/avasan/envs/peptide_des_venv/bin/activate
         python_path=`which python`
         echo $python_path
         echo "🌐 Setting environment variables..."
-        #export MPICH_GPU_SUPPORT_ENABLED=1
-        #export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
+        export MPICH_GPU_SUPPORT_ENABLED=1
+        export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
 
         # Fix for AF_UNIX path too long error
         export TMPDIR="/tmp/pytorch_$$"
@@ -359,6 +355,7 @@ main() {
             --datafile "$DATA_FILE" \
             --work_dir "$WORK_DIR" \
             --device "$DEVICE" \
+            --devicetype "xpu" \
             --cluster "$CLUSTER" \
             --wandb_project "$WANDB_PROJECT" \
             --wandb_name "$WANDB_NAME" \

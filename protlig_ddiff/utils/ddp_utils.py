@@ -37,13 +37,13 @@ import torch
 import torch.distributed as dist
 
 # Intel extensions for Aurora
-#try:
-#    import intel_extension_for_pytorch as ipex
-#    import oneccl_bindings_for_pytorch as torch_ccl
-#    INTEL_AVAILABLE = True
-#except ImportError:
-#    INTEL_AVAILABLE = False
-#    print("⚠️  Intel extensions not found, running on CPU/CUDA")
+try:
+    import intel_extension_for_pytorch as ipex
+    import oneccl_bindings_for_pytorch as torch_ccl
+    INTEL_AVAILABLE = True
+except ImportError:
+    INTEL_AVAILABLE = False
+    print("⚠️  Intel extensions not found, running on CPU/CUDA")
 
 
 def setup_ddp_aurora():
@@ -95,7 +95,7 @@ def setup_ddp_aurora():
     if INTEL_AVAILABLE:
         try:
             # Try XPU backend first
-            backend = 'ccl'  # Use 'ccl' instead of 'xpu:ccl' for Aurora
+            backend = 'xpu:ccl'  # Use 'ccl' instead of 'xpu:ccl' for Aurora
             print(f"DDP: Rank {RANK} attempting to initialize with CCL backend")
 
             # Set timeout for initialization

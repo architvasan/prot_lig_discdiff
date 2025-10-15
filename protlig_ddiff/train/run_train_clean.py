@@ -60,6 +60,13 @@ def cleanup_temp_directory():
             pass
 
 import torch
+try:
+    import intel_extension_for_pytorch as ipex
+    import oneccl_bindings_for_pytorch
+    INTEL_GPU=True
+except:
+    INTEL_GPU=False
+
 import torch.nn.functional as F
 import torch.distributed as dist
 from torch.utils.data import DataLoader
@@ -166,7 +173,7 @@ class TrainerConfig:
     config_file: str | None = None
     rank: int = 0
     world_size: int = 1
-    device: str = 'cpu'
+    device: str = 'xpu'
     seed: int = 42
     use_wandb: bool = True
     resume_checkpoint: Optional[str] = None
@@ -183,7 +190,7 @@ class TrainerConfig:
 
     # Top-level config values
     tokens: int = 26
-    devicetype: str = 'cuda'
+    devicetype: str = 'xpu'
 
     def __post_init__(self):
         """Load YAML config and set all values as attributes."""
@@ -506,7 +513,7 @@ class UniRef50Trainer:
         # Optimizer
         self.optimizer = create_optimizer(
             self.model,
-            learning_rate=self.config.training.get('learning_rate', 1e-4),
+            learning_rate=self.config.world_size * self.config.training.get('learning_rate', 1e-4),
             weight_decay=self.config.training.get('weight_decay', 0.01)
         )
 
@@ -1219,7 +1226,8 @@ def parse_args():
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     parser.add_argument("--datafile", type=str, required=True, help="Path to training data")
     parser.add_argument("--work_dir", type=str, default="./work_dir", help="Working directory")
-    parser.add_argument("--device", type=str, default="cpu", help="Device to use (e.g., 'cpu', '0', 'cuda:0')")
+    parser.add_argument("--device", type=str, default="cpu", help="Device to use (e.g., 'cpu', '0', 'cuda:0', 'xpu:0')")
+    parser.add_argument("--devicetype", type=str, default="xpu", help="Device to use (e.g., 'cpu', '0', 'cuda:0', 'xpu:0')")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("--resume_checkpoint", type=str, help="Resume from checkpoint")
@@ -1275,6 +1283,7 @@ def main():
             rank=rank,
             world_size=world_size,
             device=device,
+            devicetype=args.devicetype,
             seed=args.seed,
             use_wandb=not args.no_wandb,
             resume_checkpoint=args.resume_checkpoint
