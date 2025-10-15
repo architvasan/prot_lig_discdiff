@@ -3,7 +3,7 @@
 
 # Vocabulary: 25 base tokens (20 amino acids + 5 special) + 1 absorbing = 26 total
 tokens: 26
-devicetype: cuda
+devicetype: xpu  # Changed to xpu for Aurora, use cuda for other systems
 
 # Model configuration - balanced for protein sequences
 model:

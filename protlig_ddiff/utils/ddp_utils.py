@@ -72,25 +72,101 @@ def setup_ddp_aurora():
 
     print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
 
-    ## Set XPU device
-    #device = f'xpu:{LOCAL_RANK}'
-    #print(device)
-    #torch.xpu.set_device(LOCAL_RANK)
+    # Check if Intel XPU is available
+    try:
+        import intel_extension_for_pytorch as ipex
+        import oneccl_bindings_for_pytorch as torch_ccl
+        INTEL_AVAILABLE = True
+        print(f"DDP: Intel extensions available on rank {RANK}")
 
-    # Initialize distributed communication with CCL backend for Intel XPU
-    torch.distributed.init_process_group(
-        backend='xpu:ccl',
-        init_method='env://',
-        rank=int(RANK),
-        world_size=int(SIZE)
-    )
+        # Check if XPU devices are available
+        try:
+            xpu_count = torch.xpu.device_count()
+            print(f"DDP: Found {xpu_count} XPU devices on rank {RANK}")
+        except Exception as e:
+            print(f"DDP: Warning - could not query XPU devices on rank {RANK}: {e}")
 
-    # Set CUDA device
-    rank = dist.get_rank()
-    device_id = rank % torch.cuda.device_count()
-    torch.cuda.set_device(device_id)
-    
-    return dist.get_rank(), device_id, dist.get_world_size()
+    except ImportError as e:
+        INTEL_AVAILABLE = False
+        print(f"DDP: Intel extensions not available on rank {RANK}: {e}")
+        print(f"DDP: Falling back to CPU/CUDA on rank {RANK}")
+
+    # Choose backend and device based on availability
+    if INTEL_AVAILABLE:
+        try:
+            # Try XPU backend first
+            backend = 'ccl'  # Use 'ccl' instead of 'xpu:ccl' for Aurora
+            print(f"DDP: Rank {RANK} attempting to initialize with CCL backend")
+
+            # Set timeout for initialization
+            import datetime
+            timeout = datetime.timedelta(seconds=300)  # 5 minute timeout
+
+            # Initialize distributed communication with CCL backend for Intel XPU
+            torch.distributed.init_process_group(
+                backend=backend,
+                init_method='env://',
+                rank=int(RANK),
+                world_size=int(SIZE),
+                timeout=timeout
+            )
+
+            print(f"DDP: Rank {RANK} successfully initialized CCL backend")
+
+            # Set XPU device
+            device_id = LOCAL_RANK
+            device_str = f'xpu:{device_id}'
+            print(f"DDP: Rank {RANK} attempting to use XPU device: {device_str}")
+
+            # Try to set XPU device
+            try:
+                torch.xpu.set_device(device_id)
+                print(f"DDP: Successfully set XPU device {device_id} on rank {RANK}")
+            except Exception as e:
+                print(f"DDP: Warning - could not set XPU device on rank {RANK}: {e}")
+                print(f"DDP: Continuing with XPU device string but no device setting")
+
+        except Exception as e:
+            print(f"DDP: CCL backend failed on rank {RANK}: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"DDP: Falling back to NCCL/CPU on rank {RANK}")
+            INTEL_AVAILABLE = False
+
+    if not INTEL_AVAILABLE:
+        # Fallback to NCCL (CUDA) or Gloo (CPU)
+        if torch.cuda.is_available():
+            backend = 'nccl'
+            device_id = RANK % torch.cuda.device_count()
+            device_str = f'cuda:{device_id}'
+            print(f"DDP: Rank {RANK} using CUDA device: {device_str}")
+
+            torch.distributed.init_process_group(
+                backend=backend,
+                init_method='env://',
+                rank=int(RANK),
+                world_size=int(SIZE)
+            )
+            torch.cuda.set_device(device_id)
+        else:
+            backend = 'gloo'
+            device_id = 0
+            device_str = 'cpu'
+            print(f"DDP: Rank {RANK} using CPU")
+
+            torch.distributed.init_process_group(
+                backend=backend,
+                init_method='env://',
+                rank=int(RANK),
+                world_size=int(SIZE)
+            )
+
+    # Verify DDP setup
+    actual_rank = dist.get_rank()
+    actual_world_size = dist.get_world_size()
+    print(f"DDP: Rank {RANK} successfully initialized - PyTorch rank: {actual_rank}, world_size: {actual_world_size}")
+
+    return actual_rank, device_str, actual_world_size
 
 
 
@@ -126,14 +202,17 @@ def setup_ddp_polaris(rank, world_size):
     print(f"DDP: Hi from rank {RANK} of {SIZE} with local rank {LOCAL_RANK}. {MASTER_ADDR}")
 
     # Initialize distributed communication
-    torch.distributed.init_process_group(backend='nccl', init_method='env://', rank = int(RANK), world_size = int(SIZE))
+    torch.distributed.init_process_group(backend='nccl', init_method='env://', rank=int(RANK), world_size=int(SIZE))
 
     # Set CUDA device
-    rank = dist.get_rank()
-    device_id = rank % torch.cuda.device_count()
+    actual_rank = dist.get_rank()
+    device_id = actual_rank % torch.cuda.device_count()
+    device_str = f'cuda:{device_id}'
     torch.cuda.set_device(device_id)
-    
-    return dist.get_rank(), device_id, dist.get_world_size()
+
+    print(f"DDP: Polaris rank {RANK} successfully initialized - PyTorch rank: {actual_rank}, device: {device_str}")
+
+    return actual_rank, device_str, dist.get_world_size()
 
 
 def cleanup_ddp():

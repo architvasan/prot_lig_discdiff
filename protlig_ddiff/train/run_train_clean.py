@@ -273,9 +273,15 @@ class UniRef50Trainer:
 
         # print(f"🔧 Environment setup: device={self.device}, seed={self.config.seed}")
 
-        # Set CUDA device if using GPU
+        # Set device if using GPU or XPU
         if self.device.type == 'cuda':
             torch.cuda.set_device(self.device)
+        elif self.device.type == 'xpu':
+            try:
+                torch.xpu.set_device(self.device)
+            except Exception as e:
+                print(f"⚠️  Could not set XPU device {self.device}: {e}")
+                # Don't fail, just continue
         
     def setup_model_and_data(self):
         """Setup model, data, and related components."""
@@ -307,7 +313,9 @@ class UniRef50Trainer:
         
         # Setup DDP if needed
         if self.config.world_size > 1:
-            self.model = DDP(self.model, device_ids=[self.device] if self.device.type == 'cuda' else None)
+            # For CUDA, specify device_ids; for XPU/CPU, use None
+            device_ids = [self.device] if self.device.type == 'cuda' else None
+            self.model = DDP(self.model, device_ids=device_ids)
         
         # Setup data
         self.setup_data_loaders()
@@ -1236,13 +1244,30 @@ def main():
         # Setup DDP if specified
         rank, world_size, device = 0, 1, args.device
         
-        print(f"{args.cluster}")
+        print(f"Cluster type: {args.cluster}")
         if args.cluster == "aurora":
-            rank, device, world_size = setup_ddp_aurora()
+            print("Setting up Aurora DDP...")
+            try:
+                rank, device, world_size = setup_ddp_aurora()
+                print(f"Aurora DDP setup successful: rank={rank}, device={device}, world_size={world_size}")
+            except Exception as e:
+                print(f"Aurora DDP setup failed: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
         elif args.cluster == "polaris":
-            rank, device, world_size = setup_ddp_polaris(rank, world_size)
+            print("Setting up Polaris DDP...")
+            try:
+                rank, device, world_size = setup_ddp_polaris(rank, world_size)
+                print(f"Polaris DDP setup successful: rank={rank}, device={device}, world_size={world_size}")
+            except Exception as e:
+                print(f"Polaris DDP setup failed: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
         
         # Create trainer config
+        print("Creating trainer config...")
         trainer_config = TrainerConfig(
             work_dir=args.work_dir,
             config_file=args.config,
@@ -1254,9 +1279,12 @@ def main():
             use_wandb=not args.no_wandb,
             resume_checkpoint=args.resume_checkpoint
         )
-        
+        print(f"Trainer config created: rank={rank}, world_size={world_size}, device={device}")
+
         # Create and run trainer
+        print("Creating trainer...")
         trainer = UniRef50Trainer(trainer_config)
+        print("Trainer created, starting training...")
         trainer.train(args.wandb_project, args.wandb_name)
         
         # print("\n🎉 Training completed successfully!")
