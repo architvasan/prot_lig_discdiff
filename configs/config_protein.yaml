@@ -73,9 +73,9 @@ scheduler:
 # Sampling configuration for monitoring during training
 sampling:
   sample_interval: 100       # Sample every 100 steps
-  min_steps_before_sampling: 500  # Wait this many steps before starting sampling (model stability)
+  min_steps_before_sampling: 100  # Wait this many steps before starting sampling (model stability)
   eval_batch_size: 4         # Number of sequences to sample
   eval_max_length: 512       # Max length for evaluation samples (shorter for speed)
-  eval_steps: 256            # Number of sampling steps (fewer for speed)
-  predictor: "analytic"      # Sampling predictor (analytic is fastest)
+  eval_steps: 100            # Number of sampling steps (fewer for speed)
+  predictor: "euler"      # Sampling predictor (analytic is fastest)
   save_to_file: true         # Save sampled sequences to file

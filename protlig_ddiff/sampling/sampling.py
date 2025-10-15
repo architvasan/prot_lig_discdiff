@@ -34,7 +34,7 @@ class mutils:
                 if torch.any(torch.isinf(sigma)):
                     print(f"🚨 Inf detected in input sigma: {torch.sum(torch.isinf(sigma))} Inf values")
 
-                output = model(x, sigma, use_subs=True)
+                output = model(x, sigma, use_subs=False)
 
                 # Debug: Check outputs
                 if torch.any(torch.isnan(output)):

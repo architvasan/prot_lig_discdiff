@@ -86,7 +86,7 @@ class ProteinSampler:
                         steps: int = 1024,
                         start_tokens: Optional[List[int]] = None,
                         end_tokens: Optional[List[int]] = None,
-                        predictor: str = 'analytic',
+                        predictor: str = 'euler',
                         denoise: bool = True,
                         eps: float = 1e-5) -> torch.Tensor:
         """
@@ -266,7 +266,7 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
         batch_size = 4
         max_length = 128
         steps = 256
-        predictor = 'analytic'
+        predictor = 'euler'
     else:
         # Try different ways to access the config values
         if hasattr(sampling_config, 'eval_batch_size'):
@@ -293,9 +293,9 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
         if hasattr(sampling_config, 'predictor'):
             predictor = sampling_config.predictor
         elif hasattr(sampling_config, 'get'):
-            predictor = sampling_config.get('predictor', 'analytic')
+            predictor = sampling_config.get('predictor', 'euler')
         else:
-            predictor = getattr(sampling_config, 'predictor', 'analytic')
+            predictor = getattr(sampling_config, 'predictor', 'euler')
 
         # print(f"🔍 Debug: Using config - batch_size: {batch_size}, max_length: {max_length}, steps: {steps}, predictor: {predictor}")
 
