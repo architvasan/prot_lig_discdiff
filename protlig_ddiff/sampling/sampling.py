@@ -48,6 +48,13 @@ class mutils:
                 if torch.any(torch.isinf(output)):
                     print(f"🚨 Inf detected in model output: {torch.sum(torch.isinf(output))} Inf values")
 
+                # Convert log probabilities to probabilities for sampling
+                # The model with use_subs=True returns log probabilities, but the graph operations expect probabilities
+                if sampling:
+                    output = torch.exp(output)
+                    # Add numerical stability
+                    output = torch.clamp(output, min=1e-8, max=1.0)
+
                 return output
         return score_fn
 
