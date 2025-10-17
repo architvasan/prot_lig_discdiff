@@ -39,6 +39,12 @@ data:
   num_workers: 0             # Data loading workers
   pin_memory: true           # Pin memory for faster GPU transfer
 
+  # Data split ratios (must sum to 1.0)
+  train_ratio: 0.8          # Training set ratio
+  val_ratio: 0.1            # Validation set ratio
+  test_ratio: 0.1           # Test set ratio
+  split_seed: 42            # Seed for reproducible data splits
+
 # Noise schedule - LogLinear works well for proteins
 noise:
   type: "cosine"          # Noise schedule type
@@ -58,16 +64,6 @@ logging:
   log_interval: 100          # Log every 100 steps
   checkpoint_interval: 1000  # Checkpoint every 1000 steps
   eval_interval: 500         # Validation evaluation every 500 steps
-
-# Validation and checkpointing
-validation:
-  eval_freq: 500             # Run validation every 500 steps
-  checkpoint_freq: 1000      # Save checkpoint every 1000 steps
-  checkpoint_on_improvement: true  # Only save checkpoint if validation improves
-  patience: 10               # Number of evaluations without improvement before stopping
-  min_delta: 0.001          # Minimum improvement to consider as better
-  save_best_only: false     # Whether to only save the best model
-  val_batch_limit: 20       # Limit validation to N batches for speed
 
 # Validation and checkpointing
 validation:

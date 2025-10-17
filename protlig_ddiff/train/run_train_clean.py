@@ -349,8 +349,33 @@ class UniRef50Trainer:
         # print(f"🏗️  Model setup: {sum(p.numel() for p in self.model.parameters()):,} parameters")
         # print(f"📊 Data setup: {len(self.train_loader)} batches per epoch")
     
+    def create_data_splits(self, dataset, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, split_seed=42):
+        """Create train/validation/test splits from dataset."""
+        # Validate ratios
+        total_ratio = train_ratio + val_ratio + test_ratio
+        if abs(total_ratio - 1.0) > 1e-6:
+            raise ValueError(f"Data split ratios must sum to 1.0, got {total_ratio}")
+
+        dataset_size = len(dataset)
+
+        # Calculate split sizes
+        train_size = int(train_ratio * dataset_size)
+        val_size = int(val_ratio * dataset_size)
+        test_size = dataset_size - train_size - val_size  # Remainder goes to test
+
+        print(f"📊 Data splits: Train={train_size:,} ({train_ratio:.1%}), "
+              f"Val={val_size:,} ({val_ratio:.1%}), Test={test_size:,} ({test_ratio:.1%})")
+
+        # Create reproducible random split
+        generator = torch.Generator().manual_seed(split_seed)
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            dataset, [train_size, val_size, test_size], generator=generator
+        )
+
+        return train_dataset, val_dataset, test_dataset
+
     def setup_data_loaders(self):
-        """Setup training and validation data loaders."""
+        """Setup training, validation, and test data loaders with proper splits."""
         # Set multiprocessing start method to avoid issues on HPC systems
         import multiprocessing as mp
         try:
@@ -375,9 +400,10 @@ class UniRef50Trainer:
 
         try:
             # Get data settings from config
-            tokenize_on_fly = self.config.data.get('tokenize_on_fly', True)  # Default to True for safety
-            use_streaming = self.config.data.get('use_streaming', True)      # Default to True for large datasets
-            max_length = self.config.data.get('max_length', 256)            # Shorter default for tokenization
+            data_config = getattr(self.config, 'data', {})
+            tokenize_on_fly = getattr(data_config, 'tokenize_on_fly', True)
+            use_streaming = getattr(data_config, 'use_streaming', True)
+            max_length = getattr(data_config, 'max_length', 256)
 
             # Disable streaming for .pt files (binary format doesn't support streaming)
             if self.config.datafile.endswith('.pt'):
@@ -386,22 +412,45 @@ class UniRef50Trainer:
 
             # print(f"🔧 Dataset settings: tokenize_on_fly={tokenize_on_fly}, use_streaming={use_streaming}, max_length={max_length}")
 
-            train_dataset = UniRef50Dataset(
+            # Load full dataset first
+            full_dataset = UniRef50Dataset(
                 data_file=self.config.datafile,
                 tokenize_on_fly=tokenize_on_fly,
                 max_length=max_length,
                 use_streaming=use_streaming
             )
             signal.alarm(0)  # Cancel timeout
-            # print(f"✅ Dataset loaded successfully: {len(train_dataset)} samples")
+            # print(f"✅ Full dataset loaded successfully: {len(full_dataset)} samples")
+
+            # Create train/val/test splits
+            train_ratio = getattr(data_config, 'train_ratio', 0.8)
+            val_ratio = getattr(data_config, 'val_ratio', 0.1)
+            test_ratio = getattr(data_config, 'test_ratio', 0.1)
+            split_seed = getattr(data_config, 'split_seed', 42)
+
+            train_dataset, val_dataset, test_dataset = self.create_data_splits(
+                full_dataset, train_ratio, val_ratio, test_ratio, split_seed
+            )
+
         except TimeoutError:
             signal.alarm(0)
             # print("⚠️  Dataset loading timed out, trying with streaming=True")
-            train_dataset = UniRef50Dataset(
+            full_dataset = UniRef50Dataset(
                 data_file=self.config.datafile,
-                tokenize_on_fly=self.config.data.get('tokenize_on_fly', False),
-                max_length=self.config.data.get('max_length', 512),
+                tokenize_on_fly=getattr(data_config, 'tokenize_on_fly', False),
+                max_length=getattr(data_config, 'max_length', 512),
                 use_streaming=True  # Force streaming on timeout
+            )
+
+            # Create splits even with timeout fallback
+            data_config = getattr(self.config, 'data', {})
+            train_ratio = getattr(data_config, 'train_ratio', 0.8)
+            val_ratio = getattr(data_config, 'val_ratio', 0.1)
+            test_ratio = getattr(data_config, 'test_ratio', 0.1)
+            split_seed = getattr(data_config, 'split_seed', 42)
+
+            train_dataset, val_dataset, test_dataset = self.create_data_splits(
+                full_dataset, train_ratio, val_ratio, test_ratio, split_seed
             )
         
         # Setup sampler for DDP
@@ -443,7 +492,8 @@ class UniRef50Trainer:
             pass
         
         # Training data loader with fallback for num_workers
-        num_workers = self.config.data.get('num_workers', 4)
+        data_config = getattr(self.config, 'data', {})
+        num_workers = getattr(data_config, 'num_workers', 4)
 
         # For HPC systems, start with fewer workers to avoid hangs
         if self.config.world_size > 1:
@@ -457,6 +507,10 @@ class UniRef50Trainer:
             # print(f"🔧 Large dataset detected ({dataset_size:,} samples), starting with {num_workers} worker(s)")
 
         # Try to create data loader, reduce num_workers if issues occur
+        training_config = getattr(self.config, 'training', {})
+        batch_size = getattr(training_config, 'batch_size', 32)
+        pin_memory = getattr(data_config, 'pin_memory', True)
+
         for workers in [num_workers, max(1, num_workers // 2), 1, 0]:
             try:
                 # print(f"🔧 Trying DataLoader with {workers} workers...")
@@ -466,11 +520,11 @@ class UniRef50Trainer:
 
                 self.train_loader = DataLoader(
                     train_dataset,
-                    batch_size=self.config.training.get('batch_size', 32),
+                    batch_size=batch_size,
                     shuffle=shuffle_setting,  # Only shuffle if no sampler
                     sampler=train_sampler,
                     num_workers=workers,
-                    pin_memory=self.config.data.get('pin_memory', True) and workers > 0,
+                    pin_memory=pin_memory and workers > 0,
                     drop_last=True,
                     timeout=30 if workers > 0 else 0,  # Add timeout for worker processes
                     persistent_workers=False,  # Disable persistent workers to avoid hangs
@@ -525,24 +579,33 @@ class UniRef50Trainer:
                 else:
                     raise
 
-        # Create validation loader (use same dataset but different sampling)
-        # For validation, we'll use a subset of the training data
-        val_batch_size = min(self.config.training.get('batch_size', 32), 16)  # Smaller batches for validation
+        # Create validation and test loaders using proper splits
+        val_batch_size = min(batch_size, 16)  # Smaller batches for validation
 
-        # Create validation sampler that takes every Nth sample
-        val_indices = list(range(0, len(train_dataset), max(1, len(train_dataset) // 1000)))  # ~1000 validation samples
-        val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
-
+        # Validation loader
         self.val_loader = DataLoader(
-            train_dataset,
+            val_dataset,
             batch_size=val_batch_size,
-            sampler=val_sampler,
+            shuffle=False,  # No shuffling for validation
             num_workers=0,  # Use 0 workers for validation to avoid issues
             pin_memory=False,
             drop_last=False
         )
 
-        # print(f"🔧 Validation loader: {len(self.val_loader)} batches, {len(val_indices)} samples")
+        # Test loader (optional, for future use)
+        self.test_loader = DataLoader(
+            test_dataset,
+            batch_size=val_batch_size,
+            shuffle=False,  # No shuffling for test
+            num_workers=0,  # Use 0 workers for test to avoid issues
+            pin_memory=False,
+            drop_last=False
+        )
+
+        print(f"🔧 Data loaders created:")
+        print(f"   📊 Train: {len(self.train_loader)} batches, {len(train_dataset):,} samples")
+        print(f"   📊 Validation: {len(self.val_loader)} batches, {len(val_dataset):,} samples")
+        print(f"   📊 Test: {len(self.test_loader)} batches, {len(test_dataset):,} samples")
 
         self.train_sampler = train_sampler
     
@@ -636,7 +699,7 @@ class UniRef50Trainer:
             pass
 
         try:
-            with open(self.sampling_file, 'a') as f:
+            with open(str(self.sampling_file), 'a') as f:
                 for i, seq in enumerate(sequences):
                     # Clean up sequence (remove special tokens)
                     clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
@@ -1223,6 +1286,67 @@ class UniRef50Trainer:
 
         return avg_val_loss, aggregated_metrics
 
+    def evaluate_test_set(self):
+        """Run evaluation on test set (typically done at end of training)."""
+        print(f"🔍 Running test set evaluation...")
+
+        self.model.eval()
+        test_losses = []
+        test_metrics = []
+
+        with torch.no_grad():
+            for i, batch in enumerate(self.test_loader):
+                batch = batch.to(self.device)
+
+                # Ensure batch is 2D: [batch_size, sequence_length]
+                if batch.dim() != 2:
+                    if batch.dim() > 2:
+                        batch = batch.view(batch.shape[0], -1)
+                    else:
+                        print(f"⚠️  Skipping invalid test batch with shape {batch.shape}")
+                        continue
+
+                try:
+                    t = torch.rand(batch.shape[0], device=self.device)
+                    sigma, dsigma = self.noise(t)
+                    perturbed_batch = self.graph.sample_transition(batch, sigma)
+                    model_output = self.model(perturbed_batch, sigma, use_subs=True)
+
+                    from protlig_ddiff.processing.subs_loss import subs_loss, compute_subs_metrics
+                    loss = subs_loss(model_output, batch, sigma, self.noise)
+                    test_losses.append(loss.item())
+
+                    metrics = compute_subs_metrics(model_output, batch, sigma)
+                    test_metrics.append(metrics)
+
+                except Exception as e:
+                    print(f"⚠️  Error in test batch {i}: {e}")
+                    continue
+
+        if not test_losses:
+            print("❌ No valid test batches processed!")
+            return float('inf'), {}
+
+        avg_test_loss = np.mean(test_losses)
+        aggregated_metrics = {}
+        if test_metrics:
+            for key in test_metrics[0].keys():
+                values = [m[key] for m in test_metrics if key in m]
+                if values:
+                    aggregated_metrics[f'test_{key}'] = np.mean(values)
+
+        print(f"✅ Test evaluation completed: {len(test_losses)} batches, avg loss: {avg_test_loss:.4f}")
+
+        # Log test results to wandb
+        if hasattr(self, 'wandb_run') and self.wandb_run is not None:
+            test_log_dict = {
+                'test/final_loss': avg_test_loss,
+                **aggregated_metrics
+            }
+            self.wandb_run.log(test_log_dict, step=self.current_step)
+
+        return avg_test_loss, aggregated_metrics
+
     def should_save_checkpoint(self, step, val_loss=None):
         """Determine if we should save a checkpoint based on validation improvement."""
         # Always save at checkpoint frequency if not using improvement-based saving
@@ -1419,9 +1543,20 @@ class UniRef50Trainer:
                         time.sleep(5)  # Brief pause before retry
                         continue
             
-            # Final checkpoint
+            # Final checkpoint and test evaluation
             if is_main_process():
                 self.save_training_checkpoint()
+
+                # Run final test evaluation
+                try:
+                    print(f"\n🧪 Running final test set evaluation...")
+                    test_loss, test_metrics = self.evaluate_test_set()
+                    print(f"🏁 Final test loss: {test_loss:.4f}")
+                    for metric, value in test_metrics.items():
+                        print(f"   📊 {metric}: {value:.4f}")
+                except Exception as e:
+                    print(f"⚠️  Test evaluation failed: {e}")
+
                 # print(f"\n🎉 Training completed! Final step: {self.current_step}")
 
         finally:
