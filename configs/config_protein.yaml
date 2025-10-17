@@ -107,3 +107,4 @@ sampling:
   calculate_esm_perplexity: true  # Calculate ESM perplexity for generated sequences
   esm_model: "esm2_t6_8M_UR50D"   # ESM model for perplexity calculation
   esm_batch_size: 4          # Batch size for ESM evaluation
+  use_subs_sampling: true    # Use SUBS parameterization during sampling (recommended for consistency with training)

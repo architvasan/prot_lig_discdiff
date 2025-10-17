@@ -34,7 +34,14 @@ class mutils:
                 if torch.any(torch.isinf(sigma)):
                     print(f"🚨 Inf detected in input sigma: {torch.sum(torch.isinf(sigma))} Inf values")
 
-                output = model(x, sigma, use_subs=False)
+                # 🎯 CRITICAL FIX: Use SUBS parameterization during sampling for consistency with training
+                if sampling:
+                    # Use SUBS parameterization during sampling to match training
+                    output = model(x, sigma, use_subs=True)
+                else:
+                    # Use score-based parameterization during training (original behavior)
+                    # I need to use subs=True for training as well
+                    output = model(x, sigma, use_subs=True)
 
                 # Debug: Check outputs
                 if torch.any(torch.isnan(output)):
