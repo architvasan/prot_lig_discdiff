@@ -31,16 +31,16 @@ HARDCODED_DATA_FILE="${PROJECT_ROOT}/input_data/processed_uniref50.pt"
 HARDCODED_WORK_DIR="${PROJECT_ROOT}/experiments/protligdiff_$(date +%Y%m%d_%H%M%S)"
 
 # Job settings (MODIFY AS NEEDED)
-HARDCODED_ACCOUNT="FoundEpidem"  # *** SET YOUR POLARIS ACCOUNT/ALLOCATION HERE ***
-HARDCODED_TIME_LIMIT=2  # Hours
-HARDCODED_QUEUE="workq"
+HARDCODED_ACCOUNT="FoundEpidem"  # *** SET YOUR AURORA ACCOUNT/ALLOCATION HERE ***
+HARDCODED_TIME_LIMIT=6  # Hours
+HARDCODED_QUEUE="prod"
 
 # Training settings (MODIFY AS NEEDED)
 HARDCODED_WANDB_PROJECT="protein-discrete-diffusion-aurora"
 HARDCODED_WANDB_NAME="aurora-run-$(date +%Y%m%d_%H%M%S)"
-HARDCODED_NODES=10
+HARDCODED_NODES=20
 HARDCODED_PPN=12  # Processes per node (Polaris has 4 GPUs per node)
-HARDCODED_SEED=42
+HARDCODED_SEED=0310
 
 # Advanced settings (usually don't need to change)
 HARDCODED_DEVICE="xpu:0"
@@ -115,28 +115,28 @@ create_pbs_script() {
     cat > "$pbs_file" << EOF
 #!/bin/bash
 #PBS -N protein_dd
-#PBS -l select=${NODES}:system=aurora
-#PBS -l place=scatter
+#PBS -l select=${NODES}
+#PBS -l filesystems=home:flare
 #PBS -l walltime=${TIME_LIMIT}:00:00
 #PBS -q ${QUEUE}
 #PBS -A ${ACCOUNT}
 #PBS -o ${WORK_DIR}/job_output.log
 #PBS -e ${WORK_DIR}/job_error.log
 
-# Load Polaris modules
-module use /soft/modulefiles
-module load conda
-
-# Set environment variables
-#export MPICH_GPU_SUPPORT_ENABLED=1
-#export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
+module load frameworks/2025.0.0
+source /flare/FoundEpidem/avasan/envs/peptide_des_venv/bin/activate
+python_path=`which python`
+echo $python_path
+echo "🌐 Setting environment variables..."
+export MPICH_GPU_SUPPORT_ENABLED=1
+export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
 
 # Fix for AF_UNIX path too long error
-export TMPDIR="/tmp/pytorch_\$\$"
-mkdir -p \$TMPDIR
-export TEMP=\$TMPDIR
-export TMP=\$TMPDIR
-echo "Set TMPDIR to: \$TMPDIR"
+export TMPDIR="/tmp/pytorch_$$"
+mkdir -p $TMPDIR
+export TEMP=$TMPDIR
+export TMP=$TMPDIR
+echo "Set TMPDIR to: $TMPDIR"
 
 # Additional multiprocessing settings
 export PYTHONUNBUFFERED=1
@@ -147,20 +147,24 @@ export WANDB_SILENT=true
 export WANDB_CONSOLE=off
 export HANG_TIMEOUT=900
 
-# Change to work directory
-cd \$PBS_O_WORKDIR
+echo "🚀 Starting interactive training..."
+echo "⚠️  Note: For production runs, use --submit to queue the job"
+echo ""
 
-# Run training with MPI
-mpiexec -n \$((${NODES} * ${PPN})) -ppn ${PPN} \\
-    python protlig_ddiff/train/run_train_clean.py \\
-    --config ${CONFIG_FILE} \\
-    --datafile ${DATA_FILE} \\
-    --work_dir ${WORK_DIR} \\
-    --device ${DEVICE} \\
-    --cluster ${CLUSTER} \\
-    --wandb_project ${WANDB_PROJECT} \\
-    --wandb_name ${WANDB_NAME} \\
-    --seed ${SEED}
+cd $PROJECT_ROOT
+# Run with MPI
+mpiexec -n $((NODES * PPN)) -ppn $PPN \
+    python protlig_ddiff/train/run_train_clean.py \
+    --config "$CONFIG_FILE" \
+    --datafile "$DATA_FILE" \
+    --work_dir "$WORK_DIR" \
+    --device "$DEVICE" \
+    --devicetype "xpu" \
+    --cluster "$CLUSTER" \
+    --wandb_project "$WANDB_PROJECT" \
+    --wandb_name "$WANDB_NAME" \
+    --seed "$SEED" \
+    2>&1 | tee "$WORK_DIR/training.log"
 
 echo "Training completed at: \$(date)"
 
@@ -169,6 +173,7 @@ if [[ -n "\$TMPDIR" && "\$TMPDIR" != "/tmp" && -d "\$TMPDIR" ]]; then
     echo "Cleaning up temporary directory: \$TMPDIR"
     rm -rf "\$TMPDIR"
 fi
+
 EOF
 
     echo "📝 Created PBS script: $pbs_file"
