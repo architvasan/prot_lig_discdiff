@@ -308,7 +308,135 @@ class UniRef50Trainer:
         self.save_best_only = getattr(val_config, 'save_best_only', False)
         self.val_batch_limit = getattr(val_config, 'val_batch_limit', 20)
                 # Don't fail, just continue
-        
+
+    def sample_timesteps(self, batch_size, mode='training', batch_idx=None):
+        """
+        Sample timesteps with configurable stochasticity levels.
+
+        Args:
+            batch_size: Number of timesteps to sample
+            mode: 'training', 'validation', or 'test'
+            batch_idx: Optional batch index for additional entropy
+
+        Returns:
+            torch.Tensor: Sampled timesteps in [0, 1]
+        """
+        # Get time sampling configuration
+        time_config = getattr(self.config, 'time_sampling', {})
+        sampling_mode = time_config.get('mode', 'rank_based')
+        extra_entropy = time_config.get('extra_entropy_sources', False)
+        temporal_mixing = time_config.get('temporal_mixing', False)
+        sequence_noise = time_config.get('sequence_level_noise', False)
+        stoch_scale = time_config.get('stochasticity_scale', 1.0)
+
+        if mode == 'validation':
+            # Deterministic validation for reproducibility
+            val_generator = torch.Generator(device=self.device).manual_seed(
+                self.config.seed + (batch_idx or 0) * 1000
+            )
+            return torch.rand(batch_size, device=self.device, generator=val_generator)
+
+        elif mode == 'test':
+            # Deterministic test for reproducibility
+            test_generator = torch.Generator(device=self.device).manual_seed(
+                self.config.seed + (batch_idx or 0) * 2000
+            )
+            return torch.rand(batch_size, device=self.device, generator=test_generator)
+
+        # Training mode - configurable stochasticity
+        if sampling_mode == 'deterministic':
+            # Fully deterministic (original approach)
+            generator = torch.Generator(device=self.device).manual_seed(
+                self.config.seed + self.current_step
+            )
+            return torch.rand(batch_size, device=self.device, generator=generator)
+
+        elif sampling_mode == 'rank_based':
+            # Rank-based deterministic (current approach)
+            generator = torch.Generator(device=self.device).manual_seed(
+                self.config.seed + self.current_step * self.config.world_size + self.config.rank
+            )
+            return torch.rand(batch_size, device=self.device, generator=generator)
+
+        elif sampling_mode == 'enhanced_stochastic':
+            # Enhanced stochasticity with multiple entropy sources
+            base_seed = self.config.seed + self.current_step * self.config.world_size + self.config.rank
+
+            # Add extra entropy sources
+            if extra_entropy:
+                # Add batch index entropy
+                if batch_idx is not None:
+                    base_seed += batch_idx * 7919  # Large prime
+
+                # Add temporal mixing from previous steps
+                if temporal_mixing and self.current_step > 0:
+                    prev_step_entropy = (self.current_step - 1) * 6421  # Another prime
+                    base_seed += prev_step_entropy
+
+                # Add some hardware-based entropy (but keep it reproducible)
+                hardware_entropy = hash(str(self.device)) % 10007  # Prime modulo
+                base_seed += hardware_entropy
+
+            generator = torch.Generator(device=self.device).manual_seed(base_seed)
+            t_base = torch.rand(batch_size, device=self.device, generator=generator)
+
+            # Add sequence-level noise within batch
+            if sequence_noise:
+                # Generate per-sequence noise
+                seq_generator = torch.Generator(device=self.device).manual_seed(
+                    base_seed + 12347  # Different prime offset
+                )
+                seq_noise = torch.rand(batch_size, device=self.device, generator=seq_generator)
+                seq_noise = (seq_noise - 0.5) * 0.1 * stoch_scale  # Small perturbation
+                t_base = torch.clamp(t_base + seq_noise, 0.0, 1.0)
+
+            # Apply stochasticity scaling
+            if stoch_scale != 1.0:
+                # Scale the variance around 0.5
+                t_centered = t_base - 0.5
+                t_scaled = t_centered * stoch_scale
+                t_base = torch.clamp(t_scaled + 0.5, 0.0, 1.0)
+
+            return t_base
+
+        elif sampling_mode == 'full_random':
+            # Maximum stochasticity - use system randomness
+            # Note: This breaks reproducibility but maximizes exploration
+            import time
+            import os
+
+            # Combine multiple entropy sources
+            entropy_sources = [
+                self.config.seed,
+                self.current_step,
+                self.config.rank,
+                int(time.time() * 1000000) % 1000000,  # Microsecond timestamp
+                os.getpid() % 10000,  # Process ID
+            ]
+
+            if batch_idx is not None:
+                entropy_sources.append(batch_idx)
+
+            # Mix entropy sources
+            mixed_seed = sum(entropy_sources) % (2**32 - 1)
+
+            generator = torch.Generator(device=self.device).manual_seed(mixed_seed)
+            t_base = torch.rand(batch_size, device=self.device, generator=generator)
+
+            # Add additional per-sequence randomness
+            if sequence_noise:
+                for i in range(batch_size):
+                    seq_seed = (mixed_seed + i * 9973) % (2**32 - 1)  # Prime multiplier
+                    seq_gen = torch.Generator(device=self.device).manual_seed(seq_seed)
+                    noise = torch.rand(1, device=self.device, generator=seq_gen).item()
+                    noise = (noise - 0.5) * 0.2 * stoch_scale  # Larger perturbation
+                    t_base[i] = torch.clamp(t_base[i] + noise, 0.0, 1.0)
+
+            return t_base
+
+        else:
+            raise ValueError(f"Unknown time sampling mode: {sampling_mode}")
+
     def setup_model_and_data(self):
         """Setup model, data, and related components."""
         # Print config summary
@@ -843,17 +971,24 @@ class UniRef50Trainer:
         x0 = batch.to(self.device)
         batch_size = x0.shape[0]
 
-        # Sample time and noise with rank-specific randomness
-        # Use rank-specific generator to ensure different sigma values across ranks
-        rank_generator = torch.Generator(device=self.device).manual_seed(
-            self.config.seed + self.current_step * self.config.world_size + self.config.rank
-        )
-        t = torch.rand(batch_size, device=self.device, generator=rank_generator)
+        # Sample time and noise with configurable stochasticity
+        t = self.sample_timesteps(batch_size, mode='training')
         sigma, dsigma = self.noise(t)
 
-        # Debug: Print sigma shape and values
-        # print(f"🔍 Sigma shape: {sigma.shape}, values: {sigma[:5]}")
-        # print(f"🔍 DSigma shape: {dsigma.shape}, values: {dsigma[:5]}")
+        # Debug: Print sigma statistics every 100 steps
+        if self.current_step % 100 == 0:
+            sigma_min = sigma.min().item()
+            sigma_max = sigma.max().item()
+            sigma_mean = sigma.mean().item()
+            high_sigma_count = (sigma > 0.9).sum().item()
+            very_high_sigma_count = (sigma > 0.95).sum().item()
+
+            print(f"🔍 Step {self.current_step} Sigma Stats:")
+            print(f"   Range: [{sigma_min:.4f}, {sigma_max:.4f}], Mean: {sigma_mean:.4f}")
+            print(f"   >0.9: {high_sigma_count}/{batch_size} ({100*high_sigma_count/batch_size:.1f}%)")
+            print(f"   >0.95: {very_high_sigma_count}/{batch_size} ({100*very_high_sigma_count/batch_size:.1f}%)")
+            print(f"   First 5 sigmas: {sigma[:5].tolist()}")
+            print(f"   First 5 t values: {t[:5].tolist()}")
         # print(f"🔍 x0 shape: {x0.shape}")
 
         # Corrupt data
@@ -1258,10 +1393,7 @@ class UniRef50Trainer:
                 try:
                     # Sample random timestep for each sequence in batch
                     # Use deterministic validation sampling (no rank dependency for reproducible validation)
-                    val_generator = torch.Generator(device=self.device).manual_seed(
-                        self.config.seed + i * 1000  # Use batch index for reproducible validation
-                    )
-                    t = torch.rand(batch.shape[0], device=self.device, generator=val_generator)
+                    t = self.sample_timesteps(batch.shape[0], mode='validation', batch_idx=i)
                     sigma, dsigma = self.noise(t)
 
                     # Add noise to create perturbed batch
@@ -1324,10 +1456,7 @@ class UniRef50Trainer:
 
                 try:
                     # Use deterministic test sampling (no rank dependency for reproducible test results)
-                    test_generator = torch.Generator(device=self.device).manual_seed(
-                        self.config.seed + i * 2000  # Use batch index for reproducible test evaluation
-                    )
-                    t = torch.rand(batch.shape[0], device=self.device, generator=test_generator)
+                    t = self.sample_timesteps(batch.shape[0], mode='test', batch_idx=i)
                     sigma, dsigma = self.noise(t)
                     perturbed_batch = self.graph.sample_transition(batch, sigma)
                     model_output = self.model(perturbed_batch, sigma, use_subs=True)
@@ -1529,18 +1658,20 @@ class UniRef50Trainer:
         try:
             # Training loop
             max_steps = self.config.training.get('max_steps', 100000)
+            num_epochs = self.config.training.get('num_epochs', 10)
             epoch_count = 0
             consecutive_failures = 0
             max_consecutive_failures = 3
 
-            while self.current_step < max_steps:
+            #while self.current_step < max_steps:
+            for epoch in range(num_epochs):
                 epoch_count += 1
                 epoch_start_time = time.time()
 
                 try:
                     # Set epoch for distributed sampler
                     if self.train_sampler is not None:
-                        epoch = self.current_step // len(self.train_loader)
+                        #epoch = self.current_step // len(self.train_loader)
                         # print(f"🔍 Rank {self.config.rank}: Setting sampler epoch to {epoch}")
                         self.train_sampler.set_epoch(epoch)
                         # print(f"🔍 Rank {self.config.rank}: Sampler epoch set, will see {len(self.train_sampler)} samples")

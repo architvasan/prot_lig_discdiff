@@ -20,7 +20,7 @@ training:
   learning_rate: 1.0e-5        # Learning rate (reduced for numerical stability)
   weight_decay: 0.01         # Weight decay for regularization
   warmup_steps: 2000         # Warmup steps (longer for stability)
-  max_steps: 50000           # Total training steps
+  max_steps: 500000000           # Total training steps
   gradient_clip_norm: 0.5    # Gradient clipping (reduced for stability)
   accumulate_grad_batches: 4 # Effective batch = 16 * 8 = 128
   use_ema: true              # Use exponential moving average
@@ -30,6 +30,7 @@ training:
   # Sampling failure handling
   max_sampling_failures: 1   # Maximum consecutive sampling failures before stopping
   stop_on_sampling_failure: true  # Whether to stop training on sampling failures
+  num_epochs: 10           # Number of epochs (will stop after max_steps)
 
 # Data configuration
 data:
@@ -45,12 +46,20 @@ data:
   test_ratio: 0.1           # Test set ratio
   split_seed: 42            # Seed for reproducible data splits
 
-# Noise schedule - LogLinear works well for proteins
+# Time sampling stochasticity control
+time_sampling:
+  mode: "enhanced_stochastic"  # Options: "deterministic", "rank_based", "enhanced_stochastic", "full_random"
+  extra_entropy_sources: true  # Use additional entropy sources (batch_idx, sequence_idx, etc.)
+  temporal_mixing: true        # Mix current and previous step information
+  sequence_level_noise: true   # Add per-sequence randomness within batches
+  stochasticity_scale: 1.0     # Scale factor for stochasticity (0.0 = deterministic, 2.0 = very random)
+
+# Noise schedule - Cosine works well for proteins
 noise:
   type: "cosine"          # Noise schedule type
   eps: 1e-3                  # Small epsilon for numerical stability
   sigma_min: 1e-4            # Minimum noise level
-  sigma_max: 2.0             # Maximum noise level
+  sigma_max: 1.5             # Maximum noise level (reduced from 2.0 for better stability)
 
 # Curriculum learning - DISABLED for debugging
 curriculum:
