@@ -843,8 +843,12 @@ class UniRef50Trainer:
         x0 = batch.to(self.device)
         batch_size = x0.shape[0]
 
-        # Sample time and noise
-        t = torch.rand(batch_size, device=self.device)
+        # Sample time and noise with rank-specific randomness
+        # Use rank-specific generator to ensure different sigma values across ranks
+        rank_generator = torch.Generator(device=self.device).manual_seed(
+            self.config.seed + self.current_step * self.config.world_size + self.config.rank
+        )
+        t = torch.rand(batch_size, device=self.device, generator=rank_generator)
         sigma, dsigma = self.noise(t)
 
         # Debug: Print sigma shape and values
@@ -1162,14 +1166,22 @@ class UniRef50Trainer:
 
                     is_best = current_val_loss is not None and current_val_loss <= self.best_val_loss
 
-                    try:
-                        self.save_training_checkpoint(
-                            val_loss=current_val_loss,
-                            is_best=is_best
-                        )
-                    except Exception as e:
-                        print(f"⚠️  Failed to save checkpoint: {e}")
-                        pass
+                    # Only main process saves checkpoint
+                    if is_main_process():
+                        try:
+                            self.save_training_checkpoint(
+                                val_loss=current_val_loss,
+                                is_best=is_best
+                            )
+                        except Exception as e:
+                            print(f"⚠️  Failed to save checkpoint: {e}")
+
+                    # Synchronize all processes after checkpointing
+                    if self.config.world_size > 1:
+                        try:
+                            dist.barrier(timeout=120)  # 2 minute timeout for checkpoint sync
+                        except Exception as e:
+                            print(f"⚠️  Checkpoint barrier timeout on rank {self.config.rank}: {e}")
 
         except Exception as e:
             # print(f"❌ Training epoch failed on rank {self.config.rank}: {e}")
@@ -1245,7 +1257,11 @@ class UniRef50Trainer:
 
                 try:
                     # Sample random timestep for each sequence in batch
-                    t = torch.rand(batch.shape[0], device=self.device)
+                    # Use deterministic validation sampling (no rank dependency for reproducible validation)
+                    val_generator = torch.Generator(device=self.device).manual_seed(
+                        self.config.seed + i * 1000  # Use batch index for reproducible validation
+                    )
+                    t = torch.rand(batch.shape[0], device=self.device, generator=val_generator)
                     sigma, dsigma = self.noise(t)
 
                     # Add noise to create perturbed batch
@@ -1307,7 +1323,11 @@ class UniRef50Trainer:
                         continue
 
                 try:
-                    t = torch.rand(batch.shape[0], device=self.device)
+                    # Use deterministic test sampling (no rank dependency for reproducible test results)
+                    test_generator = torch.Generator(device=self.device).manual_seed(
+                        self.config.seed + i * 2000  # Use batch index for reproducible test evaluation
+                    )
+                    t = torch.rand(batch.shape[0], device=self.device, generator=test_generator)
                     sigma, dsigma = self.noise(t)
                     perturbed_batch = self.graph.sample_transition(batch, sigma)
                     model_output = self.model(perturbed_batch, sigma, use_subs=True)
@@ -1407,17 +1427,27 @@ class UniRef50Trainer:
         if self.ema_model is not None:
             checkpoint['ema_state_dict'] = self.ema_model.state_dict()
 
-        torch.save(checkpoint, checkpoint_path)
-        self.last_checkpoint_step = self.current_step
+        # Save checkpoint with timeout protection
+        try:
+            print(f"💾 Saving checkpoint: {checkpoint_path}")
+            torch.save(checkpoint, checkpoint_path)
+            self.last_checkpoint_step = self.current_step
+            print(f"✅ Checkpoint saved successfully: {checkpoint_path}")
 
-        if is_best:
-            best_path = checkpoint_dir / 'best_checkpoint.pt'
-            torch.save(checkpoint, best_path)
-            print(f"🏆 Best checkpoint saved: {best_path}")
+            if is_best:
+                best_path = checkpoint_dir / 'best_checkpoint.pt'
+                print(f"🏆 Saving best checkpoint: {best_path}")
+                torch.save(checkpoint, best_path)
+                print(f"✅ Best checkpoint saved: {best_path}")
 
-        print(f"💾 Checkpoint saved: {checkpoint_path}")
-        if val_loss is not None:
-            print(f"   📊 Validation loss: {val_loss:.4f} (best: {self.best_val_loss:.4f})")
+            if val_loss is not None:
+                print(f"   📊 Validation loss: {val_loss:.4f} (best: {self.best_val_loss:.4f})")
+
+        except Exception as e:
+            print(f"❌ Failed to save checkpoint: {e}")
+            # Don't raise the exception to avoid hanging the training
+            import traceback
+            traceback.print_exc()
 
     def load_training_checkpoint(self, checkpoint_path):
         """Load training checkpoint and restore validation state."""
@@ -1545,7 +1575,7 @@ class UniRef50Trainer:
             
             # Final checkpoint and test evaluation
             if is_main_process():
-                self.save_training_checkpoint()
+                self.save_training_checkpoint(force_save=True)
 
                 # Run final test evaluation
                 try:
@@ -1558,6 +1588,14 @@ class UniRef50Trainer:
                     print(f"⚠️  Test evaluation failed: {e}")
 
                 # print(f"\n🎉 Training completed! Final step: {self.current_step}")
+
+            # Synchronize all processes after final checkpoint and evaluation
+            if self.config.world_size > 1:
+                try:
+                    dist.barrier(timeout=180)  # 3 minute timeout for final sync
+                    print(f"✅ Rank {self.config.rank}: Final synchronization completed")
+                except Exception as e:
+                    print(f"⚠️  Final barrier timeout on rank {self.config.rank}: {e}")
 
         finally:
             # Cleanup with error handling
