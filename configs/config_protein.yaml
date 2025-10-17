@@ -99,8 +99,11 @@ scheduler:
 sampling:
   sample_interval: 100       # Sample every 100 steps
   min_steps_before_sampling: 100  # Wait this many steps before starting sampling (model stability)
-  eval_batch_size: 4         # Number of sequences to sample
+  eval_batch_size: 10        # Number of sequences to sample per rank (increased from 4 to 10)
   eval_max_length: 512       # Max length for evaluation samples (shorter for speed)
   eval_steps: 100            # Number of sampling steps (fewer for speed)
-  predictor: "euler"      # Sampling predictor (analytic is fastest)
+  predictor: "euler"         # Sampling predictor (analytic is fastest)
   save_to_file: true         # Save sampled sequences to file
+  calculate_esm_perplexity: true  # Calculate ESM perplexity for generated sequences
+  esm_model: "esm2_t6_8M_UR50D"   # ESM model for perplexity calculation
+  esm_batch_size: 4          # Batch size for ESM evaluation

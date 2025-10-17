@@ -878,18 +878,24 @@ class UniRef50Trainer:
             model_to_use = self.ema_model.ema_model if self.ema_model else self.model
             # print(f"🔍 Debug: Using model: {'EMA' if self.ema_model else 'main'}")
 
-            # Sample sequences
+            # Sample sequences with rank-specific generation
             # print(f"🔍 Debug: Calling sample_during_training...")
-            sequences = sample_during_training(
+            sampling_result = sample_during_training(
                 model=model_to_use,
                 graph=self.graph,
                 noise=self.noise,
                 config=self.config,
                 step=step,
-                device=self.device
+                device=self.device,
+                rank=self.config.rank,
+                world_size=self.config.world_size
             )
-            # print(sequences)
-            # print(f"🔍 Debug: Got {len(sequences) if sequences else 0} sequences")
+            # Extract sequences and ESM perplexities from result
+            sequences = sampling_result.get("sequences", []) if sampling_result else None
+            esm_perplexities = sampling_result.get("esm_perplexities", []) if sampling_result else []
+            sampling_rank = sampling_result.get("rank", self.config.rank) if sampling_result else self.config.rank
+
+            # print(f"🔍 Debug: Got {len(sequences) if sequences else 0} sequences from rank {sampling_rank}")
 
             # Check for critical sampling failures
             if sequences is None:
@@ -913,12 +919,13 @@ class UniRef50Trainer:
                     pass
                 self.sampling_failure_count = 0
 
-            # Print sequences to console
+            # Print sequences to console with ESM perplexities
             if sequences:
                 # print(f"🧬 Generated {len(sequences)} sequences:")
                 for i, seq in enumerate(sequences[:3]):  # Show first 3
                     clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
-                    # print(f"  Sample {i+1}: {clean_seq[:80]}{'...' if len(clean_seq) > 80 else ''}")
+                    esm_ppl_str = f" (ESM PPL: {esm_perplexities[i]:.2f})" if esm_perplexities and i < len(esm_perplexities) else ""
+                    # print(f"  Rank {sampling_rank} Sample {i+1}: {clean_seq[:80]}{'...' if len(clean_seq) > 80 else ''}{esm_ppl_str}")
                 pass
             else:
                 # print("🔍 Debug: No sequences generated")
@@ -932,15 +939,37 @@ class UniRef50Trainer:
 
             # Log to wandb if available
             if self.wandb_run is not None and sequences:
-                # print(f"🔍 Debug: Logging {len(sequences)} sequences to wandb")
-                # Log first few sequences as text
-                sample_text = "\n".join([f"Sample {i+1}: {seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()[:100]}..."
-                                       for i, seq in enumerate(sequences[:3])])
-                self.wandb_run.log({
+                # Create enhanced sample text with ESM perplexities
+                sample_lines = []
+                for i, seq in enumerate(sequences[:3]):
+                    clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()[:100]
+                    esm_ppl_str = f" (ESM PPL: {esm_perplexities[i]:.2f})" if esm_perplexities and i < len(esm_perplexities) else ""
+                    sample_lines.append(f"Rank {sampling_rank} Sample {i+1}: {clean_seq}...{esm_ppl_str}")
+
+                sample_text = "\n".join(sample_lines)
+
+                # Log basic metrics
+                log_data = {
                     "samples/sequences": sample_text,
                     "samples/step": step,
-                    "samples/epoch": current_epoch
-                }, step=step)
+                    "samples/epoch": current_epoch,
+                    "samples/count": len(sequences),
+                    "samples/rank": sampling_rank
+                }
+
+                # Log ESM perplexity statistics if available
+                if esm_perplexities:
+                    import numpy as np
+                    valid_perplexities = [p for p in esm_perplexities if not np.isinf(p)]
+                    if valid_perplexities:
+                        log_data.update({
+                            "samples/esm_perplexity_mean": np.mean(valid_perplexities),
+                            "samples/esm_perplexity_std": np.std(valid_perplexities),
+                            "samples/esm_perplexity_min": np.min(valid_perplexities),
+                            "samples/esm_perplexity_max": np.max(valid_perplexities),
+                        })
+
+                self.wandb_run.log(log_data, step=step)
             else:
                 # print(f"🔍 Debug: Not logging to wandb - wandb_run: {self.wandb_run is not None}, sequences: {len(sequences) if sequences else 0}")
                 pass

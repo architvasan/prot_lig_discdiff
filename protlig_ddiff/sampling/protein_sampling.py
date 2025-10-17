@@ -236,9 +236,9 @@ def create_protein_sampler(model, graph, noise, tokenizer=None, device='cuda'):
     return ProteinSampler(model, graph, noise, tokenizer, device)
 
 
-def sample_during_training(model, graph, noise, config, step, device='cuda'):
+def sample_during_training(model, graph, noise, config, step, device='cuda', rank=0, world_size=1):
     """
-    Sample sequences during training for monitoring/logging.
+    Sample sequences during training for monitoring/logging with rank-specific generation.
 
     Args:
         model: Current model state
@@ -247,65 +247,63 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
         config: Training config with sampling parameters
         step: Current training step
         device: Device to run on
+        rank: Current process rank for distributed training
+        world_size: Total number of processes
 
     Returns:
-        List of sampled protein sequences
+        Dict with sampled sequences and ESM perplexities
     """
 
-    # print(f"🔍 Debug: sample_during_training called at step {step}")
+    # print(f"🔍 Debug: sample_during_training called at step {step}, rank {rank}")
 
     # Get sampling config
     sampling_config = getattr(config, 'sampling', None)
-    # print(f"🔍 Debug: sampling_config from config: {sampling_config}")
-    # print(f"🔍 Debug: config type: {type(config)}")
-    # print(f"🔍 Debug: config attributes: {dir(config) if hasattr(config, '__dict__') else 'no __dict__'}")
 
     if sampling_config is None:
-        # print("🔍 Debug: Using default sampling config")
         # Default sampling config
-        batch_size = 4
+        batch_size = 10
         max_length = 128
         steps = 256
         predictor = 'euler'
+        calculate_esm = False
+        esm_model = "esm2_t6_8M_UR50D"
+        esm_batch_size = 4
     else:
-        # Try different ways to access the config values
-        if hasattr(sampling_config, 'eval_batch_size'):
-            batch_size = sampling_config.eval_batch_size
-        elif hasattr(sampling_config, 'get'):
-            batch_size = sampling_config.get('eval_batch_size', 4)
-        else:
-            batch_size = getattr(sampling_config, 'eval_batch_size', 4)
+        # Extract config values with proper fallbacks
+        batch_size = getattr(sampling_config, 'eval_batch_size', 10)
+        max_length = getattr(sampling_config, 'eval_max_length', 128)
+        steps = getattr(sampling_config, 'eval_steps', 256)
+        predictor = getattr(sampling_config, 'predictor', 'euler')
+        calculate_esm = getattr(sampling_config, 'calculate_esm_perplexity', False)
+        esm_model = getattr(sampling_config, 'esm_model', "esm2_t6_8M_UR50D")
+        esm_batch_size = getattr(sampling_config, 'esm_batch_size', 4)
 
-        if hasattr(sampling_config, 'eval_max_length'):
-            max_length = sampling_config.eval_max_length
-        elif hasattr(sampling_config, 'get'):
-            max_length = sampling_config.get('eval_max_length', 128)
-        else:
-            max_length = getattr(sampling_config, 'eval_max_length', 128)
+        # Handle dict-like config access
+        if hasattr(sampling_config, 'get'):
+            batch_size = sampling_config.get('eval_batch_size', batch_size)
+            max_length = sampling_config.get('eval_max_length', max_length)
+            steps = sampling_config.get('eval_steps', steps)
+            predictor = sampling_config.get('predictor', predictor)
+            calculate_esm = sampling_config.get('calculate_esm_perplexity', calculate_esm)
+            esm_model = sampling_config.get('esm_model', esm_model)
+            esm_batch_size = sampling_config.get('esm_batch_size', esm_batch_size)
 
-        if hasattr(sampling_config, 'eval_steps'):
-            steps = sampling_config.eval_steps
-        elif hasattr(sampling_config, 'get'):
-            steps = sampling_config.get('eval_steps', 256)
-        else:
-            steps = getattr(sampling_config, 'eval_steps', 256)
+    print(f"🧬 Rank {rank}: Sampling {batch_size} sequences (step {step})")
 
-        if hasattr(sampling_config, 'predictor'):
-            predictor = sampling_config.predictor
-        elif hasattr(sampling_config, 'get'):
-            predictor = sampling_config.get('predictor', 'euler')
-        else:
-            predictor = getattr(sampling_config, 'predictor', 'euler')
+    # Create rank-specific sampler with different random seed
+    rank_seed = getattr(config, 'seed', 42) + step * 1000 + rank * 10000
 
-        # print(f"🔍 Debug: Using config - batch_size: {batch_size}, max_length: {max_length}, steps: {steps}, predictor: {predictor}")
+    # Set random seed for rank-specific generation
+    import torch
+    torch.manual_seed(rank_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(rank_seed)
 
     # Create sampler
-    # print(f"🔍 Debug: Creating ProteinSampler...")
     sampler = ProteinSampler(model, graph, noise, device=device)
 
     # Sample sequences
     try:
-        # print(f"🔍 Debug: Starting sampling...")
         sequences = sampler.sample_unconditional(
             batch_size=batch_size,
             max_length=max_length,
@@ -313,57 +311,87 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
             predictor=predictor
         )
 
-        # print(f"🔍 Debug: Sampling completed, got {len(sequences) if sequences else 0} sequences")
-
         # Validate sequences
         if sequences is None:
-            print(f"❌ CRITICAL: Sampling returned None at step {step}")
-            return None  # Return None to indicate critical failure
+            print(f"❌ CRITICAL: Rank {rank} sampling returned None at step {step}")
+            return {"sequences": None, "esm_perplexities": None, "rank": rank}
 
         if len(sequences) == 0:
-            print(f"⚠️  Warning: Sampling returned empty list at step {step}")
-            return []  # Return empty list to indicate no sequences generated
+            print(f"⚠️  Warning: Rank {rank} sampling returned empty list at step {step}")
+            return {"sequences": [], "esm_perplexities": [], "rank": rank}
 
         # Check sequence quality
         valid_sequences = []
         for i, seq in enumerate(sequences):
             if seq is None or len(seq.strip()) == 0:
-                print(f"⚠️  Warning: Empty or None sequence {i+1} at step {step}")
+                print(f"⚠️  Warning: Rank {rank} empty sequence {i+1} at step {step}")
                 continue
             valid_sequences.append(seq)
 
         if len(valid_sequences) == 0:
-            print(f"⚠️  Warning: All sequences were invalid at step {step}")
-            return []
+            print(f"⚠️  Warning: Rank {rank} all sequences invalid at step {step}")
+            return {"sequences": [], "esm_perplexities": [], "rank": rank}
 
         if len(valid_sequences) < len(sequences):
-            print(f"⚠️  Warning: {len(sequences) - len(valid_sequences)} invalid sequences filtered out at step {step}")
+            print(f"⚠️  Warning: Rank {rank} filtered {len(sequences) - len(valid_sequences)} invalid sequences at step {step}")
 
+        # Calculate ESM perplexity if requested
+        esm_perplexities = []
+        if calculate_esm and valid_sequences:
+            try:
+                print(f"🔬 Rank {rank}: Calculating ESM perplexity for {len(valid_sequences)} sequences...")
+                from protlig_ddiff.utils.esm_evaluator import calculate_esm_perplexity
+
+                esm_perplexities = calculate_esm_perplexity(
+                    sequences=valid_sequences,
+                    model_name=esm_model,
+                    batch_size=esm_batch_size,
+                    mask_fraction=0.15,
+                    seed=rank_seed + 999,  # Different seed for ESM evaluation
+                    device=device
+                )
+
+                if esm_perplexities:
+                    avg_perplexity = sum(esm_perplexities) / len(esm_perplexities)
+                    print(f"✅ Rank {rank}: ESM perplexity calculated. Mean: {avg_perplexity:.2f}")
+                else:
+                    print(f"⚠️  Rank {rank}: ESM perplexity calculation failed")
+
+            except Exception as e:
+                print(f"⚠️  Rank {rank}: Error calculating ESM perplexity: {e}")
+                esm_perplexities = [float('inf')] * len(valid_sequences)
+
+        # Display sample sequences
         if valid_sequences:
-            print(f"\n🧬 Sampled {len(valid_sequences)} valid sequences at step {step}:")
+            print(f"🧬 Rank {rank}: Generated {len(valid_sequences)} sequences at step {step}:")
             for i, seq in enumerate(valid_sequences[:3]):  # Show first 3
-                # Clean up sequence for display
                 clean_seq = seq.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
-                print(f"  Sample {i+1}: {clean_seq[:50]}{'...' if len(clean_seq) > 50 else ''}")
+                esm_ppl_str = f", ESM PPL: {esm_perplexities[i]:.2f}" if esm_perplexities and i < len(esm_perplexities) else ""
+                print(f"  Rank {rank} Sample {i+1}: {clean_seq[:50]}{'...' if len(clean_seq) > 50 else ''}{esm_ppl_str}")
 
-        return valid_sequences
+        return {
+            "sequences": valid_sequences,
+            "esm_perplexities": esm_perplexities,
+            "rank": rank,
+            "step": step
+        }
 
     except torch.cuda.OutOfMemoryError as e:
-        print(f"❌ CUDA OOM during sampling at step {step}: {e}")
+        print(f"❌ CUDA OOM during sampling at step {step}, rank {rank}: {e}")
         print("🔧 Try reducing batch_size or max_length in sampling config")
-        return None  # Critical failure
+        return {"sequences": None, "esm_perplexities": None, "rank": rank}  # Critical failure
 
     except RuntimeError as e:
         if "CUDA" in str(e) or "device" in str(e).lower():
-            print(f"❌ CUDA/Device error during sampling at step {step}: {e}")
-            return None  # Critical failure
+            print(f"❌ CUDA/Device error during sampling at step {step}, rank {rank}: {e}")
+            return {"sequences": None, "esm_perplexities": None, "rank": rank}  # Critical failure
         elif "probability tensor contains" in str(e):
-            print(f"⚠️  Numerical stability issue during sampling at step {step}: {e}")
+            print(f"⚠️  Rank {rank}: Numerical stability issue during sampling at step {step}: {e}")
             print(f"🔧 This is common in early training - the model will improve with more steps")
 
             # Try with reduced parameters for better stability
             try:
-                print(f"🔧 Attempting sampling with reduced parameters...")
+                print(f"🔧 Rank {rank}: Attempting sampling with reduced parameters...")
                 reduced_sampler = ProteinSampler(model, graph, noise, device=device)
                 reduced_sequences = reduced_sampler.sample_unconditional(
                     batch_size=min(batch_size, 2),  # Reduce batch size
@@ -372,22 +400,27 @@ def sample_during_training(model, graph, noise, config, step, device='cuda'):
                     predictor=predictor
                 )
                 if reduced_sequences and len(reduced_sequences) > 0:
-                    print(f"✅ Reduced parameter sampling succeeded with {len(reduced_sequences)} sequences")
-                    return reduced_sequences
+                    print(f"✅ Rank {rank}: Reduced parameter sampling succeeded with {len(reduced_sequences)} sequences")
+                    return {
+                        "sequences": reduced_sequences,
+                        "esm_perplexities": [float('inf')] * len(reduced_sequences),  # Skip ESM for reduced sampling
+                        "rank": rank,
+                        "step": step
+                    }
                 else:
-                    print(f"⚠️  Reduced parameter sampling also failed")
-                    return []
+                    print(f"⚠️  Rank {rank}: Reduced parameter sampling also failed")
+                    return {"sequences": [], "esm_perplexities": [], "rank": rank}
             except Exception as e2:
-                print(f"⚠️  Reduced parameter sampling failed: {e2}")
-                return []  # Non-critical failure
+                print(f"⚠️  Rank {rank}: Reduced parameter sampling failed: {e2}")
+                return {"sequences": [], "esm_perplexities": [], "rank": rank}  # Non-critical failure
         else:
-            print(f"⚠️  Runtime error during sampling at step {step}: {e}")
+            print(f"⚠️  Rank {rank}: Runtime error during sampling at step {step}: {e}")
             import traceback
             traceback.print_exc()
-            return []  # Non-critical failure
+            return {"sequences": [], "esm_perplexities": [], "rank": rank}  # Non-critical failure
 
     except Exception as e:
-        print(f"⚠️  Unexpected error during sampling at step {step}: {e}")
+        print(f"⚠️  Rank {rank}: Unexpected error during sampling at step {step}: {e}")
         import traceback
         traceback.print_exc()
-        return []  # Non-critical failure
+        return {"sequences": [], "esm_perplexities": [], "rank": rank}  # Non-critical failure
