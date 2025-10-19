@@ -172,9 +172,46 @@ def compute_accuracy(predictions, targets, ignore_index=-100):
     return accuracy.item()
 
 
-def compute_perplexity(loss):
-    """Compute perplexity from loss."""
-    return torch.exp(loss).item()
+def compute_perplexity(model_output, targets, ignore_index=-100):
+    """
+    Compute perplexity from model outputs and targets.
+
+    Args:
+        model_output: Model logits [batch, seq, vocab] or log probabilities
+        targets: Target tokens [batch, seq]
+        ignore_index: Index to ignore (padding, special tokens)
+
+    Returns:
+        perplexity: Perplexity value
+    """
+    # Flatten for easier processing
+    flat_output = model_output.view(-1, model_output.size(-1))  # [batch*seq, vocab]
+    flat_targets = targets.view(-1)  # [batch*seq]
+
+    # Create mask for valid tokens (not padding/special tokens)
+    valid_mask = (flat_targets != ignore_index)
+
+    if valid_mask.sum() == 0:
+        return float('inf')
+
+    # Calculate cross-entropy loss (negative log-likelihood) for valid tokens only
+    # Use reduction='none' to get per-token losses
+    if model_output.dim() == 3:  # Logits
+        log_probs = F.log_softmax(flat_output, dim=-1)
+    else:  # Already log probabilities
+        log_probs = flat_output
+
+    # Extract log probabilities for target tokens
+    target_log_probs = log_probs.gather(1, flat_targets.unsqueeze(1)).squeeze(1)
+
+    # Apply mask and calculate average negative log-likelihood
+    valid_log_probs = target_log_probs[valid_mask]
+    avg_nll = -valid_log_probs.mean()
+
+    # Perplexity is exp(average negative log-likelihood)
+    perplexity = torch.exp(avg_nll)
+
+    return perplexity.item()
 
 
 def clip_gradients(model, max_norm=1.0):

@@ -136,7 +136,7 @@ def compute_subs_metrics(model_output, x0, sigma, attention_mask=None):
         'mean_prob': p_theta_valid.mean().item(),
         'min_prob': p_theta_valid.min().item(),
         'max_prob': p_theta_valid.max().item(),
-        'perplexity': torch.exp(-log_p_theta_valid.mean()).item(),
+        'perplexity': torch.exp(-log_p_theta_valid.mean()).item(),  # This is correct for SUBS (ground truth token probs)
         'accuracy': (p_theta_valid > 0.5).float().mean().item(),  # Rough accuracy measure
     }
     

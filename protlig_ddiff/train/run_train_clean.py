@@ -307,6 +307,11 @@ class UniRef50Trainer:
         self.min_delta = getattr(val_config, 'min_delta', 0.001)
         self.save_best_only = getattr(val_config, 'save_best_only', False)
         self.val_batch_limit = getattr(val_config, 'val_batch_limit', 20)
+
+        # Get logging config with defaults
+        logging_config = getattr(self.config, 'logging', {})
+        self.log_interval = getattr(logging_config, 'log_interval', 20)
+        self.debug_interval = getattr(logging_config, 'debug_interval', 100)  # For debug prints
                 # Don't fail, just continue
 
     def sample_timesteps(self, batch_size, mode='training', batch_idx=None):
@@ -1004,20 +1009,20 @@ class UniRef50Trainer:
         t = self.sample_timesteps(batch_size, mode='training')
         sigma, dsigma = self.noise(t)
 
-        # Debug: Print sigma statistics every 100 steps
-        if self.current_step % 100 == 0:
+        # Debug: Print sigma statistics every debug_interval steps
+        if self.current_step % self.debug_interval == 0:
             sigma_min = sigma.min().item()
             sigma_max = sigma.max().item()
             sigma_mean = sigma.mean().item()
             high_sigma_count = (sigma > 0.9).sum().item()
             very_high_sigma_count = (sigma > 0.95).sum().item()
 
-            print(f"🔍 Step {self.current_step} Sigma Stats:")
-            print(f"   Range: [{sigma_min:.4f}, {sigma_max:.4f}], Mean: {sigma_mean:.4f}")
-            print(f"   >0.9: {high_sigma_count}/{batch_size} ({100*high_sigma_count/batch_size:.1f}%)")
-            print(f"   >0.95: {very_high_sigma_count}/{batch_size} ({100*very_high_sigma_count/batch_size:.1f}%)")
-            print(f"   First 5 sigmas: {sigma[:5].tolist()}")
-            print(f"   First 5 t values: {t[:5].tolist()}")
+            #print(f"🔍 Step {self.current_step} Sigma Stats:")
+            #print(f"   Range: [{sigma_min:.4f}, {sigma_max:.4f}], Mean: {sigma_mean:.4f}")
+            #print(f"   >0.9: {high_sigma_count}/{batch_size} ({100*high_sigma_count/batch_size:.1f}%)")
+            #print(f"   >0.95: {very_high_sigma_count}/{batch_size} ({100*very_high_sigma_count/batch_size:.1f}%)")
+            #print(f"   First 5 sigmas: {sigma[:5].tolist()}")
+            #print(f"   First 5 t values: {t[:5].tolist()}")
         # print(f"🔍 x0 shape: {x0.shape}")
 
         # Corrupt data
@@ -1112,12 +1117,13 @@ class UniRef50Trainer:
         # Compute metrics (use unscaled loss for logging)
         with torch.no_grad():
             accuracy = compute_accuracy(model_output, x0)
-            perplexity = compute_perplexity(loss)
+            # Compute perplexity correctly from model outputs and targets
+            perplexity = compute_perplexity(model_output, x0, ignore_index=-100)
             # Get average sigma for this batch for monitoring
             avg_sigma = sigma.mean().item()
 
-            # Debug high accuracy - print details every 100 steps
-            if self.current_step % 100 == 0 and accuracy > 0.9:
+            # Debug high accuracy - print details every debug_interval steps
+            if self.current_step % self.debug_interval == 0 and accuracy > 0.9:
                 # print(f"\n🔍 High accuracy debug at step {self.current_step}:")
                 # print(f"   Accuracy: {accuracy:.4f}")
                 # print(f"   Avg sigma: {avg_sigma:.4f}")
@@ -1276,7 +1282,7 @@ class UniRef50Trainer:
                     pbar.set_postfix(postfix_dict)
 
                 # Log metrics periodically (only after actual optimization steps)
-                if self.current_step % 20 == 0:  # and is_main_process():
+                if self.current_step % self.log_interval == 0:  # and is_main_process():
                     self.log_training_metrics()
 
                 # Sample sequences periodically
@@ -1298,7 +1304,7 @@ class UniRef50Trainer:
                 current_val_loss = None
                 if self.current_step % self.val_eval_freq == 0 and self.current_step > 0:
                     try:
-                        print(f"\n🔍 Running SUBS validation at step {self.current_step}...")
+                        #print(f"\n🔍 Running SUBS validation at step {self.current_step}...")
                         current_val_loss, val_metrics = self.validate_model_subs()
 
                         # Update validation tracking
@@ -1343,7 +1349,7 @@ class UniRef50Trainer:
                     # Synchronize all processes after checkpointing
                     if self.config.world_size > 1:
                         try:
-                            dist.barrier(timeout=120)  # 2 minute timeout for checkpoint sync
+                            dist.barrier(timeout=30)  # 2 minute timeout for checkpoint sync
                         except Exception as e:
                             print(f"⚠️  Checkpoint barrier timeout on rank {self.config.rank}: {e}")
 
@@ -1386,15 +1392,15 @@ class UniRef50Trainer:
             pass
 
         # Print summary only occasionally to reduce noise
-        if self.current_step % 100 == 0:
-            # print(f"\n📊 Step {self.current_step} | "
-            #       f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
-            #       f"Acc: {metrics.get('accuracy', 0):.3f} | "
-            #       f"PPL: {metrics.get('perplexity', 0):.2f} | "
-            #       f"σ: {metrics.get('avg_sigma', 0):.3f} | "
-            #       f"LR: {metrics.get('learning_rate', 0):.2e} | "
-            #       f"Time: {format_time(elapsed_time)}")
-            pass
+        #if self.current_step % self.debug_interval == 0:
+        #    # print(f"\n📊 Step {self.current_step} | "
+        #    #       f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
+        #    #       f"Acc: {metrics.get('accuracy', 0):.3f} | "
+        #    #       f"PPL: {metrics.get('perplexity', 0):.2f} | "
+        #    #       f"σ: {metrics.get('avg_sigma', 0):.3f} | "
+        #    #       f"LR: {metrics.get('learning_rate', 0):.2e} | "
+        #    #       f"Time: {format_time(elapsed_time)}")
+        #    pass
     
     def validate_model_subs(self):
         """Run validation using SUBS loss on validation set."""

@@ -5,24 +5,26 @@
 tokens: 26
 devicetype: xpu  # Changed to xpu for Aurora, use cuda for other systems
 
-# Model configuration - balanced for protein sequences
+# Model configuration - scaled up for better protein sequence modeling
 model:
-  dim: 1024                    # Model dimension (smaller for faster training)
-  n_heads: 16                  # Number of attention heads
-  n_layers: 16                 # Number of transformer layers
+  dim: 2048                    # Model dimension (scaled 2x: 1024 → 2048 for better capacity)
+  n_heads: 32                  # Number of attention heads (scaled to maintain head_dim=64)
+  n_layers: 20                 # Number of transformer layers (increased from 16)
   max_seq_len: 512           # Maximum protein sequence length
-  cond_dim: 256              # Time embedding dimension
+  cond_dim: 512              # Time embedding dimension (scaled with model dim)
   scale_by_sigma: false      # Disable for SUBS loss (recommended)
+  dropout: 0.1               # Dropout for regularization (helps with larger models)
+  mlp_ratio: 4               # MLP expansion ratio (standard for transformers)
 
-# Training configuration - optimized for stability
+# Training configuration - optimized for 2048d model
 training:
-  batch_size: 8             # Mini-batch size (adjust based on memory)
-  learning_rate: 1.0e-5        # Learning rate (reduced for numerical stability)
-  weight_decay: 0.01         # Weight decay for regularization
-  warmup_steps: 2000         # Warmup steps (longer for stability)
+  batch_size: 4             # Reduced batch size for 2048d model (4 * 240 = 960 per step)
+  learning_rate: 6.0e-6        # Reduced LR for larger model stability
+  weight_decay: 0.03         # Increased weight decay for 400M parameter model
+  warmup_steps: 5000         # Longer warmup for larger model stability
   max_steps: 500000000           # Total training steps
-  gradient_clip_norm: 0.5    # Gradient clipping (reduced for stability)
-  accumulate_grad_batches: 4 # Effective batch = 16 * 8 = 128
+  gradient_clip_norm: 1.0    # Gradient clipping for larger model
+  accumulate_grad_batches: 8 # Effective batch = 4 * 8 * 240 = 7,680 per step
   use_ema: true              # Use exponential moving average
   ema_decay: 0.9999          # EMA decay rate
   use_subs_loss: true        # Use SUBS loss (recommended for stability)
@@ -58,7 +60,7 @@ time_sampling:
 noise:
   type: "cosine"          # Noise schedule type
   eps: 1e-3                  # Small epsilon for numerical stability
-  sigma_min: 1e-4            # Minimum noise level
+  sigma_min: 1e-3            # Minimum noise level
   sigma_max: 1.5             # Maximum noise level (reduced from 2.0 for better stability)
 
 # Curriculum learning - DISABLED for debugging
@@ -70,16 +72,17 @@ curriculum:
 
 # Logging and checkpointing
 logging:
-  log_interval: 100          # Log every 100 steps
-  checkpoint_interval: 1000  # Checkpoint every 1000 steps
-  eval_interval: 500         # Validation evaluation every 500 steps
+  log_interval: 100           # Log metrics to wandb every N steps (frequent logging, no performance impact)
+  debug_interval: 100        # Print debug information every N steps (sigma stats, etc.)
+  checkpoint_interval: 1000  # Checkpoint every 1000 steps (DEPRECATED - use validation.checkpoint_freq)
+  eval_interval: 500         # Validation evaluation every 500 steps (DEPRECATED - use validation.eval_freq)
 
 # Validation and checkpointing
 validation:
   eval_freq: 500             # Run validation every 500 steps
   checkpoint_freq: 1000      # Save checkpoint every 1000 steps
   checkpoint_on_improvement: true  # Only save checkpoint if validation improves
-  patience: 10               # Number of evaluations without improvement before stopping
+  patience: 50               # Number of evaluations without improvement before stopping
   min_delta: 0.001          # Minimum improvement to consider as better
   save_best_only: false     # Whether to only save the best model
   val_batch_limit: 20       # Limit validation to N batches for speed
@@ -97,14 +100,14 @@ scheduler:
 
 # Sampling configuration for monitoring during training
 sampling:
-  sample_interval: 100       # Sample every 100 steps
-  min_steps_before_sampling: 100  # Wait this many steps before starting sampling (model stability)
-  eval_batch_size: 10        # Number of sequences to sample per rank (increased from 4 to 10)
-  eval_max_length: 512       # Max length for evaluation samples (shorter for speed)
-  eval_steps: 100            # Number of sampling steps (fewer for speed)
+  sample_interval: 1000      # Sample every 1000 steps (reduced from 100 to avoid performance degradation)
+  min_steps_before_sampling: 1000  # Wait this many steps before starting sampling (model stability)
+  eval_batch_size: 4         # Number of sequences to sample per rank (reduced from 10 for speed)
+  eval_max_length: 256       # Max length for evaluation samples (reduced from 512 for speed)
+  eval_steps: 50             # Number of sampling steps (reduced from 100 for speed)
   predictor: "euler"         # Sampling predictor (analytic is fastest)
   save_to_file: true         # Save sampled sequences to file
   calculate_esm_perplexity: true  # Calculate ESM perplexity for generated sequences
   esm_model: "esm2_t6_8M_UR50D"   # ESM model for perplexity calculation
-  esm_batch_size: 4          # Batch size for ESM evaluation
+  esm_batch_size: 2          # Batch size for ESM evaluation (reduced for speed)
   use_subs_sampling: true    # Use SUBS parameterization during sampling (recommended for consistency with training)
