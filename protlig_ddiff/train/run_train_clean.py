@@ -1156,13 +1156,14 @@ class UniRef50Trainer:
         current_lr = 1.0e-5
         # Setup progress bar with timeout protection
         if True:
-            pbar = tqdm(self.train_loader, desc=f"Training")#, postfix= {
-                    #'loss': f"{loss:.4f}",
-                    #'acc': f"{accuracy:.3f}",
-                    #'ppl': f"{perplexity:.2f}",
-                    #'lr': f"{current_lr:.2e}",
-                    #'step': self.current_step
-                #})
+            pbar = tqdm(self.train_loader, desc=f"Training", postfix={
+                    'loss': f"{loss:.4f}",
+                    'acc': f"{accuracy:.3f}",
+                    'ppl': f"{perplexity:.2f}",
+                    'σ': f"0.000",
+                    'lr': f"{current_lr:.2e}",
+                    'step': self.current_step
+                })
         #else:
         #    pbar = self.train_loader
 
@@ -1235,14 +1236,33 @@ class UniRef50Trainer:
                 else:
                     # No optimization step, set grad_norm to 0 for logging
                     grad_norm = 0.0
-                # Increment step counter (only after actual optimization step)
-                self.current_step += 1
 
-
-                # Update metrics
+                # Update metrics and progress bar every batch (not just optimization steps)
                 step_time = time.time() - step_start_time
                 current_lr = self.scheduler.get_last_lr()[0]
 
+                # Update progress bar every batch
+                if True:  # is_main_process():
+                    # Create a more informative progress bar
+                    postfix_dict = {
+                        'loss': f"{loss:.4f}",
+                        'acc': f"{accuracy:.3f}",
+                        'ppl': f"{perplexity:.2f}",
+                        'σ': f"{avg_sigma:.3f}",  # Add sigma to progress bar
+                        'lr': f"{current_lr:.2e}",
+                        'step': self.current_step
+                    }
+
+                    # Only show accumulation step if we're accumulating gradients
+                    if self.accumulate_grad_batches > 1:
+                        postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
+
+                    pbar.set_postfix(postfix_dict)
+
+                # Increment step counter (only after actual optimization step)
+                self.current_step += 1
+
+                # Update metrics
                 self.metrics.update(
                     loss=loss,
                     accuracy=accuracy,
@@ -1262,24 +1282,6 @@ class UniRef50Trainer:
                     grad_norm=grad_norm,
                     step_time=step_time
                 )
-
-                # Update progress bar
-                if True:  # is_main_process():
-                    # Create a more informative progress bar
-                    postfix_dict = {
-                        'loss': f"{loss:.4f}",
-                        'acc': f"{accuracy:.3f}",
-                        'ppl': f"{perplexity:.2f}",
-                        'σ': f"{avg_sigma:.3f}",  # Add sigma to progress bar
-                        'lr': f"{current_lr:.2e}",
-                        'step': self.current_step
-                    }
-
-                    # Only show accumulation step if we're accumulating gradients
-                    if self.accumulate_grad_batches > 1:
-                        postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
-
-                    pbar.set_postfix(postfix_dict)
 
                 # Log metrics periodically (only after actual optimization steps)
                 if self.current_step % self.log_interval == 0:  # and is_main_process():
