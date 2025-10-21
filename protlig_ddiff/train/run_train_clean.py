@@ -1154,8 +1154,9 @@ class UniRef50Trainer:
         accuracy = 0.0
         perplexity = 100.0
         current_lr = 1.0e-5
-        # Setup progress bar with timeout protection
-        if True:
+        # Setup progress bar with timeout protection (only on rank 0)
+        show_progress = (self.config.rank == 0) if hasattr(self.config, 'rank') else True
+        if show_progress:
             pbar = tqdm(self.train_loader, desc=f"Training", postfix={
                     'loss': f"{loss:.4f}",
                     'acc': f"{accuracy:.3f}",
@@ -1164,6 +1165,8 @@ class UniRef50Trainer:
                     'lr': f"{current_lr:.2e}",
                     'step': self.current_step
                 })
+        else:
+            pbar = self.train_loader
         #else:
         #    pbar = self.train_loader
 
@@ -1241,8 +1244,8 @@ class UniRef50Trainer:
                 step_time = time.time() - step_start_time
                 current_lr = self.scheduler.get_last_lr()[0]
 
-                # Update progress bar every batch
-                if True:  # is_main_process():
+                # Update progress bar every batch (only on rank 0)
+                if show_progress and hasattr(pbar, 'set_postfix'):
                     # Create a more informative progress bar
                     postfix_dict = {
                         'loss': f"{loss:.4f}",
@@ -1258,6 +1261,10 @@ class UniRef50Trainer:
                         postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
 
                     pbar.set_postfix(postfix_dict)
+
+                    # Debug: Print occasionally to verify it's working
+                    if self.current_step % 50 == 0:
+                        print(f"🔄 Progress bar updated: step={self.current_step}, loss={loss:.4f}, ppl={perplexity:.2f}")
 
                 # Increment step counter (only after actual optimization step)
                 self.current_step += 1
@@ -1285,6 +1292,7 @@ class UniRef50Trainer:
 
                 # Log metrics periodically (only after actual optimization steps)
                 if self.current_step % self.log_interval == 0:  # and is_main_process():
+                    print(f"🔍 Debug: Logging metrics at step {self.current_step} (log_interval={self.log_interval})")
                     self.log_training_metrics()
 
                 # Sample sequences periodically
@@ -1383,26 +1391,26 @@ class UniRef50Trainer:
         metrics['steps_per_second'] = self.current_step / elapsed_time
 
         # Debug: Check if we have wandb
-        # print(f"🔍 Debug: wandb_run exists: {hasattr(self, 'wandb_run')}, is not None: {getattr(self, 'wandb_run', None) is not None}")
+        print(f"🔍 Debug: wandb_run exists: {hasattr(self, 'wandb_run')}, is not None: {getattr(self, 'wandb_run', None) is not None}")
 
         # Log to wandb if available
         if hasattr(self, 'wandb_run') and self.wandb_run is not None:
-            # print(f"🔍 Debug: Logging metrics to wandb at step {self.current_step}: {list(metrics.keys())}")
+            print(f"🔍 Debug: Logging metrics to wandb at step {self.current_step}: {list(metrics.keys())}")
             log_metrics(metrics, self.current_step, wandb_run=self.wandb_run)
         else:
-            # print(f"🔍 Debug: No wandb logging - wandb_run: {getattr(self, 'wandb_run', 'not set')}")
+            print(f"🔍 Debug: No wandb logging - wandb_run: {getattr(self, 'wandb_run', 'not set')}")
             pass
 
-        # Print summary only occasionally to reduce noise
-        #if self.current_step % self.debug_interval == 0:
-        #    # print(f"\n📊 Step {self.current_step} | "
-        #    #       f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
-        #    #       f"Acc: {metrics.get('accuracy', 0):.3f} | "
-        #    #       f"PPL: {metrics.get('perplexity', 0):.2f} | "
-        #    #       f"σ: {metrics.get('avg_sigma', 0):.3f} | "
-        #    #       f"LR: {metrics.get('learning_rate', 0):.2e} | "
-        #    #       f"Time: {format_time(elapsed_time)}")
-        #    pass
+        #Print summary only occasionally to reduce noise
+        if self.current_step % self.debug_interval == 0:
+             print(f"\n📊 Step {self.current_step} | "
+                   f"Loss: {metrics.get('loss', 'N/A'):.4f} | "
+                   f"Acc: {metrics.get('accuracy', 0):.3f} | "
+                   f"PPL: {metrics.get('perplexity', 0):.2f} | "
+                   f"σ: {metrics.get('avg_sigma', 0):.3f} | "
+                   f"LR: {metrics.get('learning_rate', 0):.2e} | "
+                   f"Time: {format_time(elapsed_time)}")
+            pass
     
     def validate_model_subs(self):
         """Run validation using SUBS loss on validation set."""

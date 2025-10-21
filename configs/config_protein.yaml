@@ -100,7 +100,7 @@ scheduler:
 
 # Sampling configuration for monitoring during training
 sampling:
-  sample_interval: 1000      # Sample every 1000 steps (reduced from 100 to avoid performance degradation)
+  sample_interval: 300      # Sample every 1000 steps (reduced from 100 to avoid performance degradation)
   min_steps_before_sampling: 1000  # Wait this many steps before starting sampling (model stability)
   eval_batch_size: 4         # Number of sequences to sample per rank (reduced from 10 for speed)
   eval_max_length: 256       # Max length for evaluation samples (reduced from 512 for speed)
