@@ -1251,7 +1251,7 @@ class UniRef50Trainer:
                     # No optimization step, set grad_norm to 0 for logging
                     grad_norm = 0.0
 
-                # Increment step counter first
+                # Increment step counter after every batch
                 self.current_step += 1
 
                 # Debug: Print when we reach progress bar update section
