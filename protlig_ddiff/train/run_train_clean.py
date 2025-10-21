@@ -1156,7 +1156,10 @@ class UniRef50Trainer:
         current_lr = 1.0e-5
         # Setup progress bar with timeout protection (only on rank 0)
         show_progress = (self.config.rank == 0) if hasattr(self.config, 'rank') else True
+        print(f"🔍 Setting up progress bar: rank={getattr(self.config, 'rank', 'unknown')}, show_progress={show_progress}")
+
         if show_progress:
+            print(f"🔍 Creating tqdm progress bar...")
             pbar = tqdm(self.train_loader, desc=f"Training", postfix={
                     'loss': f"{loss:.4f}",
                     'acc': f"{accuracy:.3f}",
@@ -1166,9 +1169,11 @@ class UniRef50Trainer:
                     'step': self.current_step
                 })
             progress_bar = pbar  # Keep reference to tqdm object for updates
+            print(f"🔍 Progress bar created: type={type(pbar)}")
         else:
             pbar = self.train_loader
             progress_bar = None
+            print(f"🔍 No progress bar (not rank 0)")
         #else:
         #    pbar = self.train_loader
 
@@ -1187,6 +1192,10 @@ class UniRef50Trainer:
             for batch in pbar:
                 batch_count += 1
                 current_time = time.time()
+
+                # Debug: Print first few batches to verify loop is running
+                if batch_count <= 5:
+                    print(f"🔍 Batch {batch_count}: rank={getattr(self.config, 'rank', 'unknown')}, step={self.current_step}")
 
                 # Log progress every 30 seconds to detect hangs
                 if current_time - last_log_time > 30:
@@ -1244,6 +1253,10 @@ class UniRef50Trainer:
 
                 # Increment step counter first
                 self.current_step += 1
+
+                # Debug: Print when we reach progress bar update section
+                if batch_count <= 5:
+                    print(f"🔍 Reached progress bar section: batch={batch_count}, step={self.current_step}")
 
                 # Update metrics and progress bar every batch (not just optimization steps)
                 step_time = time.time() - step_start_time
