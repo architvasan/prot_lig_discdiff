@@ -38,7 +38,7 @@ HARDCODED_QUEUE="prod"
 # Training settings (MODIFY AS NEEDED)
 HARDCODED_WANDB_PROJECT="protein-discrete-diffusion-aurora"
 HARDCODED_WANDB_NAME="aurora-run-$(date +%Y%m%d_%H%M%S)"
-HARDCODED_NODES=20
+HARDCODED_NODES=1
 HARDCODED_PPN=12  # Processes per node (Polaris has 4 GPUs per node)
 HARDCODED_SEED=0310
 
