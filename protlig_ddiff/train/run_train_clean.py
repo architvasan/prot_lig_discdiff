@@ -1158,7 +1158,7 @@ class UniRef50Trainer:
         show_progress = (self.config.rank == 0) if hasattr(self.config, 'rank') else True
         print(f"🔍 Setting up progress bar: rank={getattr(self.config, 'rank', 'unknown')}, show_progress={show_progress}")
 
-        if show_progress:
+        if True:#show_progress:
             print(f"🔍 Creating tqdm progress bar...")
             pbar = tqdm(self.train_loader, desc=f"Training", postfix={
                     'loss': f"{loss:.4f}",
@@ -1262,8 +1262,9 @@ class UniRef50Trainer:
                 step_time = time.time() - step_start_time
                 current_lr = self.scheduler.get_last_lr()[0]
 
+                print("reached progress bar")
                 # Update progress bar every batch (only on rank 0)
-                if progress_bar is not None:
+                if True:#progress_bar is not None:
                     # Debug: Always print first few updates to verify it's working
                     if self.current_step <= 10 or self.current_step % 50 == 0:
                         print(f"🔄 Progress bar update attempt: step={self.current_step}, progress_bar_exists={progress_bar is not None}")
@@ -1282,6 +1283,7 @@ class UniRef50Trainer:
                     if self.accumulate_grad_batches > 1:
                         postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
 
+                    print(postfix_dict)
                     progress_bar.set_postfix(postfix_dict)
 
                     # Force refresh the progress bar
