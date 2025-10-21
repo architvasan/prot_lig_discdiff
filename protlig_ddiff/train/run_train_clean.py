@@ -1412,7 +1412,6 @@ class UniRef50Trainer:
             log_metrics(metrics, self.current_step, wandb_run=self.wandb_run)
         else:
             print(f"🔍 Debug: No wandb logging - wandb_run: {getattr(self, 'wandb_run', 'not set')}")
-            pass
 
         #Print summary only occasionally to reduce noise
         if self.current_step % self.debug_interval == 0:
