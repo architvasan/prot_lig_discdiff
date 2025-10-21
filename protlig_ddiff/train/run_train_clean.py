@@ -1165,8 +1165,10 @@ class UniRef50Trainer:
                     'lr': f"{current_lr:.2e}",
                     'step': self.current_step
                 })
+            progress_bar = pbar  # Keep reference to tqdm object for updates
         else:
             pbar = self.train_loader
+            progress_bar = None
         #else:
         #    pbar = self.train_loader
 
@@ -1248,10 +1250,10 @@ class UniRef50Trainer:
                 current_lr = self.scheduler.get_last_lr()[0]
 
                 # Update progress bar every batch (only on rank 0)
-                if show_progress and hasattr(pbar, 'set_postfix'):
+                if progress_bar is not None:
                     # Debug: Always print first few updates to verify it's working
                     if self.current_step <= 10 or self.current_step % 50 == 0:
-                        print(f"🔄 Progress bar update attempt: step={self.current_step}, show_progress={show_progress}, has_set_postfix={hasattr(pbar, 'set_postfix')}")
+                        print(f"🔄 Progress bar update attempt: step={self.current_step}, progress_bar_exists={progress_bar is not None}")
 
                     # Create a more informative progress bar
                     postfix_dict = {
@@ -1267,10 +1269,10 @@ class UniRef50Trainer:
                     if self.accumulate_grad_batches > 1:
                         postfix_dict['acc_step'] = f"{self.accumulation_step}/{self.accumulate_grad_batches}"
 
-                    pbar.set_postfix(postfix_dict)
+                    progress_bar.set_postfix(postfix_dict)
 
                     # Force refresh the progress bar
-                    pbar.refresh()
+                    progress_bar.refresh()
 
                     # Debug: Print occasionally to verify it's working
                     if self.current_step <= 10 or self.current_step % 50 == 0:
@@ -1278,7 +1280,7 @@ class UniRef50Trainer:
                 else:
                     # Debug: Print why progress bar isn't updating
                     if self.current_step <= 10:
-                        print(f"❌ Progress bar NOT updated: show_progress={show_progress}, has_set_postfix={hasattr(pbar, 'set_postfix') if 'pbar' in locals() else 'pbar not defined'}")
+                        print(f"❌ Progress bar NOT updated: progress_bar is None (rank={getattr(self.config, 'rank', 'unknown')})")
 
                 # Update metrics
                 self.metrics.update(
@@ -1387,8 +1389,8 @@ class UniRef50Trainer:
 
         finally:
             # Ensure progress bar is closed
-            if hasattr(pbar, 'close'): #is_main_process() and 
-                pbar.close()
+            if progress_bar is not None and hasattr(progress_bar, 'close'):
+                progress_bar.close()
 
         return epoch_metrics.get_averages()
     
