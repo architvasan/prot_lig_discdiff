@@ -1240,12 +1240,19 @@ class UniRef50Trainer:
                     # No optimization step, set grad_norm to 0 for logging
                     grad_norm = 0.0
 
+                # Increment step counter first
+                self.current_step += 1
+
                 # Update metrics and progress bar every batch (not just optimization steps)
                 step_time = time.time() - step_start_time
                 current_lr = self.scheduler.get_last_lr()[0]
 
                 # Update progress bar every batch (only on rank 0)
                 if show_progress and hasattr(pbar, 'set_postfix'):
+                    # Debug: Always print first few updates to verify it's working
+                    if self.current_step <= 10 or self.current_step % 50 == 0:
+                        print(f"🔄 Progress bar update attempt: step={self.current_step}, show_progress={show_progress}, has_set_postfix={hasattr(pbar, 'set_postfix')}")
+
                     # Create a more informative progress bar
                     postfix_dict = {
                         'loss': f"{loss:.4f}",
@@ -1262,12 +1269,16 @@ class UniRef50Trainer:
 
                     pbar.set_postfix(postfix_dict)
 
-                    # Debug: Print occasionally to verify it's working
-                    if self.current_step % 50 == 0:
-                        print(f"🔄 Progress bar updated: step={self.current_step}, loss={loss:.4f}, ppl={perplexity:.2f}")
+                    # Force refresh the progress bar
+                    pbar.refresh()
 
-                # Increment step counter (only after actual optimization step)
-                self.current_step += 1
+                    # Debug: Print occasionally to verify it's working
+                    if self.current_step <= 10 or self.current_step % 50 == 0:
+                        print(f"🔄 Progress bar updated: step={self.current_step}, loss={loss:.4f}, ppl={perplexity:.2f}")
+                else:
+                    # Debug: Print why progress bar isn't updating
+                    if self.current_step <= 10:
+                        print(f"❌ Progress bar NOT updated: show_progress={show_progress}, has_set_postfix={hasattr(pbar, 'set_postfix') if 'pbar' in locals() else 'pbar not defined'}")
 
                 # Update metrics
                 self.metrics.update(
@@ -1410,7 +1421,6 @@ class UniRef50Trainer:
                    f"σ: {metrics.get('avg_sigma', 0):.3f} | "
                    f"LR: {metrics.get('learning_rate', 0):.2e} | "
                    f"Time: {format_time(elapsed_time)}")
-            pass
     
     def validate_model_subs(self):
         """Run validation using SUBS loss on validation set."""
