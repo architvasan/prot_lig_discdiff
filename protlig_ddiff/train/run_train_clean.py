@@ -11,6 +11,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 import yaml
+import traceback
 
 # Fix for AF_UNIX path too long error on HPC systems
 # Set a shorter temporary directory path before any multiprocessing operations
@@ -235,6 +236,8 @@ class TrainerConfig:
         """Get attribute with default value."""
         return getattr(self, key, default)
 
+import torch.nn.functional as F
+import traceback
 
 class UniRef50Trainer:
     """Clean and organized trainer for UniRef50 discrete diffusion training."""
@@ -1084,9 +1087,8 @@ class UniRef50Trainer:
                 raise RuntimeError(f"Model produced NaN outputs at step {self.current_step}")
 
             if torch.any(torch.isinf(model_output)):
-                # print(f"🚨 Inf detected in training model output at step {self.current_step}")
+                print(f"🚨 Inf detected in training model output at step {self.current_step}")
                 # print(f"   Inf count in output: {torch.sum(torch.isinf(model_output))}")
-                pass
 
             # Compute SUBS loss with curriculum learning
             loss, curric_dict = subs_loss_with_curriculum(
@@ -1100,7 +1102,7 @@ class UniRef50Trainer:
 
             # Check loss for NaN/Inf
             if torch.isnan(loss) or torch.isinf(loss):
-                # print(f"🚨 Invalid loss detected at step {self.current_step}: {loss}")
+                print(f"🚨 Invalid loss detected at step {self.current_step}: {loss}")
                 raise RuntimeError(f"Invalid loss at step {self.current_step}")
 
         else:
@@ -1206,8 +1208,10 @@ class UniRef50Trainer:
                 # Training step with timeout protection
                 try:
                     loss, accuracy, perplexity, avg_sigma = self.train_step(batch)
+                    print(loss, accuracy, perplexity, avg_sigma)
                 except Exception as e:
-                    # print(f"❌ Training step failed on rank {self.config.rank}: {e}")
+                    print(f"❌ Training step failed on rank {self.config.rank}: {e}")
+                    print(traceback.format_exc())
                     # Skip this batch and continue
                     continue
 

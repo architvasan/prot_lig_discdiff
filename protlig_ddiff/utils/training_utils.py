@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import json
 import time
-
+import torch.nn.functional as F
 
 def create_optimizer(model, learning_rate=1e-4, weight_decay=0.01, optimizer_type='adamw'):
     """Create optimizer for the model."""
