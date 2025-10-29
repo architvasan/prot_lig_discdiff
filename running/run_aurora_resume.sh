@@ -317,3 +317,191 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+
+main() {
+    export AFFINITY_MASK=./running/set_affinity_gpu_polaris.sh
+    echo "🌌 Aurora Cluster Protein Discrete Diffusion Training with Resume Support"
+    echo "========================================================================="
+
+    # Check required arguments
+    if [[ -z "$ACCOUNT" ]]; then
+        echo "❌ Account/allocation name is required for Aurora"
+        if [[ -n "$HARDCODED_ACCOUNT" ]]; then
+            echo "💡 Set HARDCODED_ACCOUNT in the script or use --account your_allocation_name"
+        else
+            echo "💡 Use --account your_allocation_name or set HARDCODED_ACCOUNT in the script"
+        fi
+        exit 1
+    fi
+
+    if [[ -z "$DATA_FILE" ]]; then
+        echo "❌ Data file path is required"
+        echo "💡 Set HARDCODED_DATA_FILE in the script or use --data /path/to/data.pt"
+        exit 1
+    fi
+
+    if [[ ! -f "$DATA_FILE" ]]; then
+        echo "❌ Data file not found: $DATA_FILE"
+        echo "💡 Check the path and ensure the file exists"
+        exit 1
+    fi
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "❌ Config file not found: $CONFIG_FILE"
+        echo "💡 Check the path or set HARDCODED_CONFIG_FILE in the script"
+        exit 1
+    fi
+
+    # Handle auto-resume
+    if [[ "$RESUME_CHECKPOINT" == "auto" ]]; then
+        echo "🔍 Auto-detecting latest checkpoint in work directory..."
+        local auto_checkpoint=$(find_latest_checkpoint "$WORK_DIR")
+        if [[ -n "$auto_checkpoint" ]]; then
+            RESUME_CHECKPOINT="$auto_checkpoint"
+            echo "✅ Found latest checkpoint: $RESUME_CHECKPOINT"
+        else
+            echo "⚠️  No checkpoints found in $WORK_DIR/checkpoints"
+            echo "   Starting fresh training..."
+            RESUME_CHECKPOINT=""
+        fi
+    fi
+
+    # Validate checkpoint file if specified
+    if [[ -n "$RESUME_CHECKPOINT" && "$RESUME_CHECKPOINT" != "auto" ]]; then
+        if [[ ! -f "$RESUME_CHECKPOINT" ]]; then
+            echo "❌ Checkpoint file not found: $RESUME_CHECKPOINT"
+            echo "💡 Check the path and ensure the checkpoint file exists"
+            exit 1
+        fi
+        echo "📂 Will resume from checkpoint: $RESUME_CHECKPOINT"
+    fi
+
+    # Validate start_from_step
+    if [[ -n "$START_FROM_STEP" ]]; then
+        if ! [[ "$START_FROM_STEP" =~ ^[0-9]+$ ]]; then
+            echo "❌ start_from_step must be a positive integer, got: $START_FROM_STEP"
+            exit 1
+        fi
+        echo "🔢 Will start from step: $START_FROM_STEP"
+    fi
+
+    # Print configuration
+    echo "📊 Final Configuration:"
+    echo "   Data file:      $DATA_FILE"
+    echo "   Config file:    $CONFIG_FILE"
+    echo "   Work directory: $WORK_DIR"
+    echo "   Wandb project:  $WANDB_PROJECT"
+    echo "   Wandb name:     $WANDB_NAME"
+    echo "   Nodes:          $NODES"
+    echo "   Processes/node: $PPN"
+    echo "   Total ranks:    $((NODES * PPN))"
+    echo "   Account:        $ACCOUNT"
+    echo "   Time limit:     ${TIME_LIMIT}h"
+    echo "   Queue:          $QUEUE"
+    echo "   Device:         $DEVICE"
+    echo "   Cluster:        $CLUSTER"
+    echo "   Seed:           $SEED"
+    if [[ -n "$RESUME_CHECKPOINT" ]]; then
+        echo "   Resume from:    $RESUME_CHECKPOINT"
+    fi
+    if [[ -n "$START_FROM_STEP" ]]; then
+        echo "   Start step:     $START_FROM_STEP"
+    fi
+    echo ""
+
+    # Create work directory
+    mkdir -p "$WORK_DIR"
+    echo "📁 Created work directory: $WORK_DIR"
+
+    # Copy config for reproducibility
+    cp "$CONFIG_FILE" "$WORK_DIR/config.yaml"
+
+    if [[ "$SUBMIT" == true ]]; then
+        # Create and submit PBS job
+        create_pbs_script
+
+        echo "🚀 Submitting job to Aurora queue..."
+        cd "$(dirname "$WORK_DIR")"
+        job_id=$(qsub "$WORK_DIR/submit_job.pbs")
+        echo "✅ Job submitted with ID: $job_id"
+        echo "📊 Monitor with: qstat $job_id"
+        echo "📝 Logs will be in: $WORK_DIR/"
+
+    else
+        # Interactive run (for testing)
+        echo "🔧 Loading Aurora modules..."
+        module load frameworks/2025.0.0
+        source /flare/FoundEpidem/avasan/envs/peptide_des_venv/bin/activate
+        python_path=`which python`
+        echo $python_path
+        echo "🌐 Setting environment variables..."
+        export MPICH_GPU_SUPPORT_ENABLED=1
+        export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
+
+        # Fix for AF_UNIX path too long error
+        export TMPDIR="/tmp/pytorch_$$"
+        mkdir -p $TMPDIR
+        export TEMP=$TMPDIR
+        export TMP=$TMPDIR
+        echo "Set TMPDIR to: $TMPDIR"
+
+        # Additional multiprocessing settings
+        export PYTHONUNBUFFERED=1
+        export OMP_NUM_THREADS=1
+
+        # Hang prevention settings
+        export WANDB_SILENT=true
+        export WANDB_CONSOLE=off
+        export HANG_TIMEOUT=900
+
+        echo "🚀 Starting interactive training with resume support..."
+        if [[ -n "$RESUME_CHECKPOINT" ]]; then
+            echo "📂 Resuming from checkpoint: $RESUME_CHECKPOINT"
+        fi
+        if [[ -n "$START_FROM_STEP" ]]; then
+            echo "🔢 Starting from step: $START_FROM_STEP"
+        fi
+        echo "⚠️  Note: For production runs, use --submit to queue the job"
+        echo ""
+
+        # Build the training command
+        local training_cmd="python protlig_ddiff/train/run_train_clean.py \
+            --config \"$CONFIG_FILE\" \
+            --datafile \"$DATA_FILE\" \
+            --work_dir \"$WORK_DIR\" \
+            --device \"$DEVICE\" \
+            --devicetype \"xpu\" \
+            --cluster \"$CLUSTER\" \
+            --wandb_project \"$WANDB_PROJECT\" \
+            --wandb_name \"$WANDB_NAME\" \
+            --seed \"$SEED\""
+
+        # Add resume options if specified
+        if [[ -n "$RESUME_CHECKPOINT" ]]; then
+            training_cmd="$training_cmd --resume_checkpoint \"$RESUME_CHECKPOINT\""
+        fi
+
+        if [[ -n "$START_FROM_STEP" ]]; then
+            training_cmd="$training_cmd --start_from_step \"$START_FROM_STEP\""
+        fi
+
+        # Run with MPI
+        mpiexec -n $((NODES * PPN)) -ppn $PPN \
+            $training_cmd \
+            2>&1 | tee "$WORK_DIR/training.log"
+
+        if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
+            echo "🎉 Training completed successfully!"
+        else
+            echo "❌ Training failed!"
+            exit 1
+        fi
+    fi
+}
+
+# Run main function
+main "$@"
