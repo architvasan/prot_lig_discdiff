@@ -803,6 +803,9 @@ class UniRef50Trainer:
         if self.config.start_from_step is not None or self.config.resume_checkpoint is not None:
             self.validate_start_step()
 
+        # Calculate dataloader skip information for resuming
+        self.calculate_dataloader_skip_info()
+
         # Setup sampling output file
         self.setup_sampling_output()
 
@@ -1206,8 +1209,23 @@ class UniRef50Trainer:
         last_log_time = time.time()
 
         try:
+            # Handle batch skipping for resuming training
+            batches_to_skip_in_epoch = getattr(self, 'batches_to_skip_in_epoch', 0)
+
             for batch in pbar:
                 batch_count += 1
+
+                # Skip batches if resuming from a specific step
+                if batches_to_skip_in_epoch > 0:
+                    if batch_count <= batches_to_skip_in_epoch:
+                        if batch_count % 100 == 0 or batch_count <= 10:
+                            print(f"⏭️  Skipping batch {batch_count}/{batches_to_skip_in_epoch} (resuming from step {self.current_step})")
+                        continue
+                    else:
+                        # We've skipped all the batches we need to skip
+                        if batch_count == batches_to_skip_in_epoch + 1:
+                            print(f"✅ Finished skipping {batches_to_skip_in_epoch} batches, resuming training from step {self.current_step}")
+
                 current_time = time.time()
 
                 # Debug: Print first few batches to verify loop is running
@@ -1641,6 +1659,10 @@ class UniRef50Trainer:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'loss': self.metrics.losses[-1] if self.metrics.losses else float('inf'),
+            # Save dataloader position information for proper resuming
+            'batches_per_epoch': len(self.train_loader),
+            'target_epoch': getattr(self, 'target_epoch', 0),
+            'batches_to_skip_in_epoch': getattr(self, 'batches_to_skip_in_epoch', 0),
         }
 
         if self.ema_model is not None:
@@ -1782,6 +1804,31 @@ class UniRef50Trainer:
                 print(f"💡 Note: start_from_step ({self.current_step}) doesn't align with log_interval ({self.log_interval})")
                 print(f"   Next logging will occur at step {((self.current_step // self.log_interval) + 1) * self.log_interval}")
 
+    def calculate_dataloader_skip_info(self):
+        """Calculate how many batches to skip when resuming training."""
+        if self.current_step == 0:
+            self.batches_to_skip = 0
+            self.target_epoch = 0
+            self.batches_to_skip_in_epoch = 0
+            return
+
+        # Calculate total batches processed so far
+        batches_per_epoch = len(self.train_loader)
+        total_batches_processed = self.current_step
+
+        # Calculate which epoch we should be in and how many batches to skip in that epoch
+        self.target_epoch = total_batches_processed // batches_per_epoch
+        self.batches_to_skip_in_epoch = total_batches_processed % batches_per_epoch
+
+        print(f"📊 Dataloader skip calculation:")
+        print(f"   Current step: {self.current_step}")
+        print(f"   Batches per epoch: {batches_per_epoch}")
+        print(f"   Target epoch: {self.target_epoch}")
+        print(f"   Batches to skip in epoch: {self.batches_to_skip_in_epoch}")
+
+        # Store for use in training loop
+        self.batches_to_skip = total_batches_processed
+
     def train(self, wandb_project=None, wandb_name=None):
         """Main training loop."""
         # Setup wandb with timeout protection
@@ -1824,7 +1871,9 @@ class UniRef50Trainer:
             # Training loop
             max_steps = self.config.training.get('max_steps', 100000)
             num_epochs = self.config.training.get('num_epochs', 10)
-            epoch_count = 0
+
+            # Start from the correct epoch when resuming
+            epoch_count = getattr(self, 'target_epoch', 0)
             consecutive_failures = 0
             max_consecutive_failures = 3
 
@@ -1836,9 +1885,9 @@ class UniRef50Trainer:
                 try:
                     # Set epoch for distributed sampler
                     if self.train_sampler is not None:
-                        #epoch = self.current_step // len(self.train_loader)
-                        # print(f"🔍 Rank {self.config.rank}: Setting sampler epoch to {epoch}")
-                        self.train_sampler.set_epoch(epoch)
+                        # Use the actual epoch count, which accounts for resuming
+                        # print(f"🔍 Rank {self.config.rank}: Setting sampler epoch to {epoch_count}")
+                        self.train_sampler.set_epoch(epoch_count)
                         # print(f"🔍 Rank {self.config.rank}: Sampler epoch set, will see {len(self.train_sampler)} samples")
 
                     # print(f"\n🚀 Rank {self.config.rank}: Starting epoch {epoch_count}, step {self.current_step}")
@@ -1848,6 +1897,10 @@ class UniRef50Trainer:
 
                     epoch_time = time.time() - epoch_start_time
                     consecutive_failures = 0  # Reset failure counter on success
+
+                    # Reset batch skipping after first epoch (only skip in the first resumed epoch)
+                    if hasattr(self, 'batches_to_skip_in_epoch'):
+                        self.batches_to_skip_in_epoch = 0
 
                     if is_main_process():
                         # print(f"\n✅ Epoch {epoch_count} completed in {epoch_time:.1f}s | Avg Loss: {epoch_metrics['loss']:.4f}")
