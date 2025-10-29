@@ -165,6 +165,7 @@ class _TrainerConfig:
     seed: int = 42
     use_wandb: bool = True
     resume_checkpoint: Optional[str] = None
+    start_from_step: Optional[int] = None
 
 @dataclass
 class TrainerConfig:
@@ -178,6 +179,7 @@ class TrainerConfig:
     seed: int = 42
     use_wandb: bool = True
     resume_checkpoint: Optional[str] = None
+    start_from_step: Optional[int] = None
 
     # YAML config sections will be added dynamically
     model: Optional[dict] = None
@@ -787,6 +789,19 @@ class UniRef50Trainer:
         # Load checkpoint if specified
         if self.config.resume_checkpoint is not None:
             self.load_training_checkpoint(self.config.resume_checkpoint)
+        elif self.config.start_from_step is not None:
+            # Start from arbitrary step without checkpoint
+            self.current_step = self.config.start_from_step
+            print(f"🚀 Starting training from step {self.current_step} (no checkpoint loaded)")
+
+            # Fast-forward scheduler to match the step
+            print(f"⏭️  Fast-forwarding scheduler to step {self.current_step}...")
+            for _ in range(self.current_step):
+                self.scheduler.step()
+
+        # Validate the starting step
+        if self.config.start_from_step is not None or self.config.resume_checkpoint is not None:
+            self.validate_start_step()
 
         # Setup sampling output file
         self.setup_sampling_output()
@@ -1675,7 +1690,25 @@ class UniRef50Trainer:
                 self.ema_model.load_state_dict(checkpoint['ema_state_dict'])
 
             # Load training state
-            self.current_step = checkpoint.get('step', 0)
+            checkpoint_step = checkpoint.get('step', 0)
+
+            # Override step if start_from_step is specified
+            if self.config.start_from_step is not None:
+                self.current_step = self.config.start_from_step
+                print(f"🔄 Overriding checkpoint step {checkpoint_step} with start_from_step: {self.current_step}")
+
+                # Adjust scheduler to match the new step
+                # Fast-forward scheduler to the target step
+                if self.current_step > checkpoint_step:
+                    steps_to_advance = self.current_step - checkpoint_step
+                    print(f"⏭️  Fast-forwarding scheduler by {steps_to_advance} steps...")
+                    for _ in range(steps_to_advance):
+                        self.scheduler.step()
+                elif self.current_step < checkpoint_step:
+                    print(f"⚠️  Warning: start_from_step ({self.current_step}) is less than checkpoint step ({checkpoint_step})")
+                    print(f"   Scheduler state may not match the target step")
+            else:
+                self.current_step = checkpoint_step
 
             # Load validation tracking state
             self.best_val_loss = checkpoint.get('val_loss', checkpoint.get('best_loss', float('inf')))
@@ -1683,7 +1716,8 @@ class UniRef50Trainer:
             self.steps_without_improvement = checkpoint.get('steps_without_improvement', 0)
 
             print(f"✅ Checkpoint loaded successfully!")
-            print(f"   📊 Restored step: {self.current_step}")
+            print(f"   📊 Target step: {self.current_step}")
+            print(f"   📊 Original checkpoint step: {checkpoint_step}")
             print(f"   📊 Best validation loss: {self.best_val_loss:.4f}")
             print(f"   📊 Validation history length: {len(self.val_loss_history)}")
             print(f"   📊 Steps without improvement: {self.steps_without_improvement}")
@@ -1691,7 +1725,63 @@ class UniRef50Trainer:
         except Exception as e:
             print(f"❌ Failed to load checkpoint: {e}")
             raise
-    
+
+    def find_checkpoint_by_step(self, target_step, checkpoint_dir=None):
+        """Find the checkpoint closest to target step."""
+        if checkpoint_dir is None:
+            checkpoint_dir = Path(self.config.work_dir) / "checkpoints"
+
+        checkpoint_files = list(checkpoint_dir.glob("checkpoint_step_*.pt"))
+
+        if not checkpoint_files:
+            raise FileNotFoundError(f"No checkpoint files found in {checkpoint_dir}")
+
+        # Extract step numbers and find closest
+        checkpoint_steps = []
+        for file in checkpoint_files:
+            try:
+                step = int(file.stem.split('_')[-1])
+                checkpoint_steps.append((step, file))
+            except ValueError:
+                continue
+
+        if not checkpoint_steps:
+            raise ValueError("No valid checkpoint files found")
+
+        # Find closest step (prefer earlier checkpoint if exact match not found)
+        checkpoint_steps.sort()
+        best_checkpoint = None
+
+        for step, file in checkpoint_steps:
+            if step <= target_step:
+                best_checkpoint = (step, file)
+            else:
+                break
+
+        if best_checkpoint is None:
+            # All checkpoints are after target step, use earliest
+            best_checkpoint = checkpoint_steps[0]
+            print(f"⚠️  No checkpoint found before step {target_step}, using earliest: step {best_checkpoint[0]}")
+
+        return best_checkpoint[1], best_checkpoint[0]
+
+    def validate_start_step(self):
+        """Validate that the starting step makes sense."""
+        if self.config.start_from_step is not None:
+            max_reasonable_step = 1000000  # Adjust based on your training
+
+            if self.current_step < 0:
+                raise ValueError(f"start_from_step must be non-negative, got {self.current_step}")
+
+            if self.current_step > max_reasonable_step:
+                print(f"⚠️  Warning: start_from_step ({self.current_step}) is very large (>{max_reasonable_step})")
+                print(f"   This might indicate an error. Continuing anyway...")
+
+            # Check if step aligns with logging intervals
+            if self.current_step % self.log_interval != 0:
+                print(f"💡 Note: start_from_step ({self.current_step}) doesn't align with log_interval ({self.log_interval})")
+                print(f"   Next logging will occur at step {((self.current_step // self.log_interval) + 1) * self.log_interval}")
+
     def train(self, wandb_project=None, wandb_name=None):
         """Main training loop."""
         # Setup wandb with timeout protection
@@ -1849,6 +1939,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--no_wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("--resume_checkpoint", type=str, help="Resume from checkpoint")
+    parser.add_argument("--start_from_step", type=int, help="Start training from specific step (overrides checkpoint step)")
     parser.add_argument("--wandb_project", type=str, default="sedd-training", help="Wandb project name")
     parser.add_argument("--wandb_name", type=str, help="Wandb run name")
 
@@ -1904,7 +1995,8 @@ def main():
             devicetype=args.devicetype,
             seed=args.seed,
             use_wandb=not args.no_wandb,
-            resume_checkpoint=args.resume_checkpoint
+            resume_checkpoint=args.resume_checkpoint,
+            start_from_step=args.start_from_step
         )
         print(f"Trainer config created: rank={rank}, world_size={world_size}, device={device}")
 
