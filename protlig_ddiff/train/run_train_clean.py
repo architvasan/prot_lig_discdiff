@@ -1405,10 +1405,16 @@ class UniRef50Trainer:
                         current_val_loss = None
 
                 # Checkpointing every 1000 steps (or when validation improves)
-                if (self.accumulation_step == 0 and
-                    (self.current_step % self.checkpoint_freq == 0 or
-                     (current_val_loss is not None and self.should_save_checkpoint(self.current_step, current_val_loss)))):
+                regular_checkpoint = self.current_step % self.checkpoint_freq == 0
+                validation_checkpoint = current_val_loss is not None and self.should_save_checkpoint(self.current_step, current_val_loss)
+                should_checkpoint = (regular_checkpoint or validation_checkpoint)
 
+                # Debug checkpoint decision
+                if self.current_step % 100 == 0:  # Print every 100 steps to avoid spam
+                    print(f"🔍 Step {self.current_step}: regular={regular_checkpoint}, validation={validation_checkpoint}, should_checkpoint={should_checkpoint}")
+
+                if should_checkpoint:
+                    print(f"💾 Saving checkpoint at step {self.current_step} (regular={regular_checkpoint}, validation={validation_checkpoint})")
                     is_best = current_val_loss is not None and current_val_loss <= self.best_val_loss
 
                     # Only main process saves checkpoint
