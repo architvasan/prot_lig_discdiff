@@ -411,7 +411,7 @@ class TransformerBlock(nn.Module):
             # print(f"WARNING: qkv shape {qkv.shape} != expected {expected_qkv_shape}")
             # Force reshape to expected shape
             qkv = qkv.view(expected_qkv_shape)
-            print(f"Fixed qkv shape to: {qkv.shape}")
+            #print(f"Fixed qkv shape to: {qkv.shape}")
 
         qkv = rearrange(qkv, 'b s (three h d) -> b s three h d', three=3, h=self.n_heads)
         
@@ -613,7 +613,7 @@ class DiscDiffModel(nn.Module, PyTorchModelHubMixin):
             # print(f"WARNING: Model received {indices.dim()}D indices with shape {indices.shape}")
             if indices.dim() > 2:
                 indices = indices.view(indices.shape[0], -1)
-                print(f"Reshaped indices to: {indices.shape}")
+                #print(f"Reshaped indices to: {indices.shape}")
             else:
                 raise ValueError(f"indices must be 2D, got {indices.dim()}D with shape {indices.shape}")
 
