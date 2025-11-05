@@ -65,8 +65,8 @@ CLUSTER="${HARDCODED_CLUSTER:-aurora}"
 SEED="${HARDCODED_SEED:-42}"
 
 # Resume-specific settings
-RESUME_CHECKPOINT="/lus/flare/projects/FoundEpidem/avasan/IDEAL/Diffusion/prot_lig_discdiff/experiments/protligdiff_20251022_181305/checkpoints/best_checkpoint.pt"
-START_FROM_STEP="9000"
+RESUME_CHECKPOINT="/lus/flare/projects/FoundEpidem/avasan/IDEAL/Diffusion/prot_lig_discdiff/experiments/protligdiff_20251103_162053/checkpoints/checkpoint_step_26000.pt"
+START_FROM_STEP="26000"
 
 # =============================================================================
 # HELPER FUNCTIONS
