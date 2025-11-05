@@ -362,9 +362,15 @@ class UniRef50Trainer:
             return torch.rand(batch_size, device=self.device, generator=generator)
 
         elif sampling_mode == 'rank_based':
-            # Rank-based deterministic (current approach)
+            # Rank-based deterministic with improved seed mixing to avoid periodic patterns
+            # Previous formula: seed + step * world_size + rank could create periodic spikes
+            # New formula uses large primes and time component to break periodicity
+            import time
             generator = torch.Generator(device=self.device).manual_seed(
-                self.config.seed + self.current_step * self.config.world_size + self.config.rank
+                self.config.seed +
+                self.current_step * 12345 +
+                self.config.rank * 67890 +
+                int(time.time() * 1000) % 10000
             )
             return torch.rand(batch_size, device=self.device, generator=generator)
 
